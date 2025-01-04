@@ -98,6 +98,7 @@ return {
         "yaml",
         "toml",
         "gitignore",
+        "svelte",
         "proto",
         "go",
       },

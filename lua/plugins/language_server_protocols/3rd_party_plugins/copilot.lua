@@ -2,6 +2,7 @@ return {
   -- copilot
   "zbirenbaum/copilot.lua",
   cmd = "Copilot",
+  enabled = false,
   build = ":Copilot auth",
   dependencies = {
     {

@@ -64,7 +64,7 @@ vim.scriptencoding = "utf-8"
 opt.encoding = "utf-8"
 vim.bo.fileencoding = "utf-8"
 
-local TAB_SIZE = 4
+local TAB_SIZE = 2
 -- Editing settings
 opt.tabstop = TAB_SIZE                       -- using space`s
 opt.softtabstop = TAB_SIZE                   -- treat tab in editting as single character

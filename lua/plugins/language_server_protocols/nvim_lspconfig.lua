@@ -67,7 +67,13 @@ return {
         },
       },
     })
+    -- tailwind
     lspconfig.tailwindcss.setup({
+      on_attach = on_attach,
+      capabilities = capabilities,
+    })
+    -- svelte
+    lspconfig.svelte.setup({
       on_attach = on_attach,
       capabilities = capabilities,
     })
@@ -183,11 +189,11 @@ return {
 
     local func_config = {
       default_config = {
-        cmd = { "/usr/local/bin/vscode-func-server", "--stdio" },
-        filetypes = { "func" },
-        root_dir = function()
-          return vim.fn.getcwd()
-        end,
+        -- cmd = { "/usr/local/bin/vscode-func-server", "--stdio" },
+        -- filetypes = { "func" },
+        -- root_dir = function()
+        --   return vim.fn.getcwd()
+        -- end,
       },
     }
     local configs = require("lspconfig.configs")
