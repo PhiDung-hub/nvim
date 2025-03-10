@@ -1,5 +1,5 @@
 return {
-  "nvimtools/none-ls.nvim", -- Use Neovim as a language server to inject LSP diagnostics, code actions, and more via Lua.
+  "nvimtools/none-ls.nvim",  -- Use Neovim as a language server to inject LSP diagnostics, code actions, and more via Lua.
   dependencies = {
     "nvim-lua/plenary.nvim", -- premade lua functions
   },
@@ -40,7 +40,7 @@ return {
         -- diagnostics.eslint.with({
         --   diagnostics_format = "[eslint] #{m}\n(#{c})",
         -- }),
-        -- formatting.eslint,
+        formatting.prettierd,
       },
     })
 

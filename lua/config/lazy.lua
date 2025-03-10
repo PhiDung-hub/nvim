@@ -1,17 +1,17 @@
 -- Bootstrap lazy.nvim
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then
-    local lazyrepo = "https://github.com/folke/lazy.nvim.git"
-    local out = vim.fn.system({ "git", "clone", "--filter=blob:none", "--branch=stable", lazyrepo, lazypath })
-    if vim.v.shell_error ~= 0 then
-        vim.api.nvim_echo({
-            { "Failed to clone lazy.nvim:\n", "ErrorMsg" },
-            { out,                            "WarningMsg" },
-            { "\nPress any key to exit..." },
-        }, true, {})
-        vim.fn.getchar()
-        os.exit(1)
-    end
+  local lazyrepo = "https://github.com/folke/lazy.nvim.git"
+  local out = vim.fn.system({ "git", "clone", "--filter=blob:none", "--branch=stable", lazyrepo, lazypath })
+  if vim.v.shell_error ~= 0 then
+    vim.api.nvim_echo({
+      { "Failed to clone lazy.nvim:\n", "ErrorMsg" },
+      { out,                            "WarningMsg" },
+      { "\nPress any key to exit..." },
+    }, true, {})
+    vim.fn.getchar()
+    os.exit(1)
+  end
 end
 vim.opt.rtp:prepend(lazypath)
 
@@ -93,11 +93,11 @@ opt.cursorlineopt = "number,line" -- Include number & whole line
 vim.report = 5
 
 vim.filetype.add({
-    extension = {
-        mdx = "lsp_markdown",
-    },
-    filename = {},
-    pattern = {},
+  extension = {
+    mdx = "lsp_markdown",
+  },
+  filename = {},
+  pattern = {},
 })
 
 -- For UFO-nvim (folding)
@@ -108,16 +108,16 @@ opt.foldenable = true
 
 -- Define the clipboard settings for WSL
 vim.g.clipboard = {
-    name = "Linux-Clipboard",
-    copy = {
-        ['+'] = 'xsel --clipboard --input',
-        ['*'] = 'xsel --input',
-    },
-    paste = {
-        ['+'] = 'xsel --clipboard --output',
-        ['*'] = 'xsel --output',
-    },
-    cache_enabled = 0,
+  name = "Linux-Clipboard",
+  copy = {
+    ['+'] = 'xsel --clipboard --input',
+    ['*'] = 'xsel --input',
+  },
+  paste = {
+    ['+'] = 'xsel --clipboard --output',
+    ['*'] = 'xsel --output',
+  },
+  cache_enabled = 0,
 }
 
 vim.g.latex_view_method = "zathura"
@@ -126,13 +126,13 @@ vim.g.latex_view_general_options = "--synctex-forward %l:1:%f %s"
 vim.g.latex_view_general_options_latexmk = "--synctex=1"
 
 require("lazy").setup({
-    spec = {
-        { import = "plugins" },
-        { import = "plugins.editor_utils" },
-        { import = "plugins.language_server_protocols" },
-        { import = "plugins.language_server_protocols.3rd_party_plugins" },
-        { import = "plugins.gits" },
-        { import = "plugins.aesthetics" },
-        { import = "plugins.aesthetics.color_schemes" },
-    },
+  spec = {
+    { import = "plugins" },
+    { import = "plugins.editor_utils" },
+    { import = "plugins.language_server_protocols" },
+    { import = "plugins.language_server_protocols.3rd_party_plugins" },
+    { import = "plugins.gits" },
+    { import = "plugins.aesthetics" },
+    { import = "plugins.aesthetics.color_schemes" },
+  },
 })
