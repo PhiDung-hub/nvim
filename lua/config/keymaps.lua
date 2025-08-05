@@ -59,3 +59,12 @@ nnoremap("<C-m-j>", ":m .+1<CR>==")
 
 -- Using Markdown Preview
 nnoremap("<leader>p", ":MarkdownPreview<CR>")
+
+-- Avante AI shortcuts
+nnoremap("<leader>ac", "<Plug>(AvanteChat)")    -- Open chat window (primary)
+nnoremap("<leader>aa", "<Plug>(AvanteAsk)")     -- Ask AI in floating window
+nnoremap("<leader>an", "<Plug>(AvanteAskNew)")  -- New chat session
+nnoremap("<leader>ae", "<Plug>(AvanteEdit)")    -- Edit selection with AI
+nnoremap("<leader>ar", "<Plug>(AvanteRefresh)") -- Refresh context
+nnoremap("<leader>at", "<Plug>(AvanteToggle)")  -- Toggle sidebar
+nnoremap("<leader>af", "<Plug>(AvanteFocus)")   -- Focus chat window

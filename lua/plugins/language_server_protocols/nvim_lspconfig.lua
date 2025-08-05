@@ -39,7 +39,7 @@ return {
     local capabilities = cmp_nvim_lsp.default_capabilities()
 
     -- jsx/tsx/react
-    lspconfig.tsserver.setup({
+    lspconfig.ts_ls.setup({
       on_attach = on_attach,
       filetypes = {
         "javascript",
