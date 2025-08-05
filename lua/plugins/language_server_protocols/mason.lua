@@ -1,5 +1,5 @@
 return {
-  "williamboman/mason.nvim",             -- LSP manager.
+  "williamboman/mason.nvim", -- LSP manager.
   dependencies = {
     "williamboman/mason-lspconfig.nvim", -- mason config helpers.
   },
@@ -27,8 +27,8 @@ return {
       "ts_ls",
       "tailwindcss",
       "svelte",
-      "pyright",
       "yamlls",
+      "ruff", -- linter + formatter
       "bashls",
       "clangd",
       "rust_analyzer",

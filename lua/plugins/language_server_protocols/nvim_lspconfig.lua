@@ -117,7 +117,12 @@ return {
     })
 
     -- cpp
-    local clangd_cap = capabilities
+    -- Create a shallow copy of capabilities for clangd
+    local clangd_cap = vim.tbl_deep_extend("force", {}, capabilities, {
+      offsetEncoding = { "utf-16" }, -- fix: use array as expected
+
+      textDocument = { semanticHighlighting = true },
+    })
     clangd_cap.textDocument.semanticHighlighting = true
     clangd_cap.offsetEncoding = "utf-16"
     lspconfig.clangd.setup({
@@ -134,7 +139,7 @@ return {
     })
 
     -- Python
-    lspconfig.pyright.setup({
+    lspconfig.ruff.setup({
       capabilities = capabilities,
       on_attach = on_attach,
     })
@@ -213,7 +218,18 @@ return {
     local signs = { Error = "", Warn = "", Hint = "💡", Info = "" }
     for type, icon in pairs(signs) do
       local hl = "DiagnosticSign" .. type
-      vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = "" })
+      -- Link the highlight group to the corresponding Diagnostic highlight
+      vim.api.nvim_set_hl(0, hl, { link = "Diagnostic" .. type })
+
+      -- Define the sign safely
+      -- WARN: Migrated to neovim 0.11+
+      if vim.api.nvim_set_sign then
+        vim.api.nvim_set_sign(hl, {
+          text = icon,
+          texthl = hl,
+          numhl = "",
+        })
+      end
     end
 
     vim.diagnostic.config({
