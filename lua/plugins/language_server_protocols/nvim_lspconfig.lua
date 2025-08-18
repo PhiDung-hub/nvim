@@ -1,16 +1,14 @@
 return {
-  "neovim/nvim-lspconfig",  -- https://github.com/neovim/nvim-lspconfig
+  "neovim/nvim-lspconfig", -- https://github.com/neovim/nvim-lspconfig
   dependencies = {
     "hrsh7th/cmp-nvim-lsp", -- nvim-cmp source for neovim's built-in LSP.
-    "folke/neodev.nvim",    -- signature help, docs and completion for the nvim lua API.
+    "folke/neodev.nvim", -- signature help, docs and completion for the nvim lua API.
   },
   config = function()
     -- IMPORTANT: make sure to setup neodev BEFORE lspconfig
     local neodev_ok, neodev = pcall(require, "neodev")
-    if not neodev_ok then
-      neodev.setup({
-        -- add any options here, or leave empty to use the default settings
-      })
+    if neodev_ok then
+      neodev.setup({})
     end
 
     local lspconfig_ok, lspconfig = pcall(require, "lspconfig")
@@ -40,7 +38,10 @@ return {
 
     -- jsx/tsx/react
     lspconfig.ts_ls.setup({
-      on_attach = on_attach,
+      on_attach = function(client, bufnr)
+        client.server_capabilities.documentFormattingProvider = false
+        on_attach(client, bufnr)
+      end,
       filetypes = {
         "javascript",
         "javascriptreact",
@@ -94,7 +95,7 @@ return {
     -- rust_analyzer config: https://github.com/rust-lang/rust-analyzer/blob/master/docs/user/generated_config.adoc
     lspconfig.rust_analyzer.setup({
       on_attach = on_attach,
-      capabiligies = capabilities,
+      capabilities = capabilities,
       settings = {
         ["rust-analyzer"] = {
           check = {
@@ -123,8 +124,6 @@ return {
 
       textDocument = { semanticHighlighting = true },
     })
-    clangd_cap.textDocument.semanticHighlighting = true
-    clangd_cap.offsetEncoding = "utf-16"
     lspconfig.clangd.setup({
       on_attach = on_attach,
       capabilities = clangd_cap,
@@ -189,23 +188,6 @@ return {
           },
         },
       },
-    })
-    print(lspconfig.lua_ls)
-
-    local func_config = {
-      default_config = {
-        -- cmd = { "/usr/local/bin/vscode-func-server", "--stdio" },
-        -- filetypes = { "func" },
-        -- root_dir = function()
-        --   return vim.fn.getcwd()
-        -- end,
-      },
-    }
-    local configs = require("lspconfig.configs")
-    configs.func = func_config
-    lspconfig.func.setup({
-      capabilities = capabilities,
-      on_attach = on_attach,
     })
 
     vim.lsp.handlers["textDocument/publishDiagnostics"] = vim.lsp.with(vim.lsp.diagnostic.on_publish_diagnostics, {

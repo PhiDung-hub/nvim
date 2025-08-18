@@ -1,42 +1,46 @@
 return {
-  "williamboman/mason.nvim", -- LSP manager.
+  "williamboman/mason.nvim", -- LSP/DAP/Linters/Formatters installer
   dependencies = {
-    "williamboman/mason-lspconfig.nvim", -- mason config helpers.
+    "williamboman/mason-lspconfig.nvim", -- Bridge Mason <-> nvim-lspconfig
   },
   config = function()
     local mason_ok, mason = pcall(require, "mason")
     if not mason_ok then
-      print("WARNING: mason is unavailable")
+      vim.notify("WARNING: mason is unavailable", vim.log.levels.WARN)
       return
     end
 
-    local mason_lspconfig_ok, mason_lspconfig = pcall(require, "mason-lspconfig")
-    if not mason_lspconfig_ok then
-      print("WARNING: mason_lspconfig is unavailable")
+    local mlsp_ok, mason_lspconfig = pcall(require, "mason-lspconfig")
+    if not mlsp_ok then
+      vim.notify("WARNING: mason-lspconfig is unavailable", vim.log.levels.WARN)
       return
     end
 
-    -- Available server: https://github.com/williamboman/mason-lspconfig.nvim#available-lsp-servers
-    -- With instruction for config: https://github.com/neovim/nvim-lspconfig/blob/master/doc/server_configurations.md
+    -- Install these LSP servers; setup is handled in nvim_lspconfig.lua
     local servers = {
+      -- web
       "cssls",
-      "emmet_ls",
       "html",
       "jsonls",
-      "solc",
       "ts_ls",
       "tailwindcss",
       "svelte",
+      "emmet_ls",
       "yamlls",
-      "ruff", -- linter + formatter
+
+      -- languages / tools
       "bashls",
       "clangd",
       "rust_analyzer",
+      "gopls",
       "taplo",
       "prismals",
       "lua_ls",
       "sqlls",
-      "gopls",
+      "ruff",
+
+      -- solidity
+      "solidity_ls_nomicfoundation",
     }
 
     mason.setup({})

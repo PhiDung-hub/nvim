@@ -12,10 +12,6 @@ return {
     end
 
     local formatting = null_ls.builtins.formatting
-    local diagnostics = null_ls.builtins.diagnostics
-    local completion = null_ls.builtins.completion
-
-    local augroup = vim.api.nvim_create_augroup("LspFormatting", {})
 
     -- Set up mason-null-ls to ensure formatter/linter tools are installed
     require("mason-null-ls").setup({
@@ -44,9 +40,5 @@ return {
         formatting.prettierd,
       },
     })
-
-    vim.api.nvim_create_user_command("DisableLspFormatting", function()
-      vim.api.nvim_clear_autocmds({ group = augroup, buffer = 0 })
-    end, { nargs = 0 })
   end,
 }

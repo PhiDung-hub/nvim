@@ -9,20 +9,20 @@ return {
       gemini = {
         -- endpoint = "https://generativelanguage.googleapis.com",
         model = "gemini-2.5-flash-preview-05-20", -- your desired model (or use gpt-4o, etc.)
-        timeout = 30000,                          -- Timeout in milliseconds, increase this for reasoning models
+        timeout = 30000, -- Timeout in milliseconds, increase this for reasoning models
         temperature = 0,
-        max_tokens = 8192,                        -- Increase this to include reasoning tokens (for reasoning models)
+        max_tokens = 8192, -- Increase this to include reasoning tokens (for reasoning models)
       },
     },
     -- Project-wide context and indexing
     rules = {
-      project_dir = ".avante/rules",                        -- Project-specific rules directory
+      project_dir = ".avante/rules", -- Project-specific rules directory
       global_dir = vim.fn.expand("~/.config/avante/rules"), -- Global rules directory
     },
     -- Window behavior for separate window mode
     windows = {
       position = "right", -- Can be "left", "right", "top", "bottom"
-      width = 35,         -- Width percentage of screen
+      width = 35, -- Width percentage of screen
       wrap = true,
       sidebar_header = {
         enabled = true,
@@ -73,12 +73,12 @@ return {
     "nvim-lua/plenary.nvim",
     "MunifTanjim/nui.nvim",
     --- The below dependencies are optional,
-    "echasnovski/mini.pick",         -- for file_selector provider mini.pick
+    "echasnovski/mini.pick", -- for file_selector provider mini.pick
     "nvim-telescope/telescope.nvim", -- for file_selector provider telescope
-    "hrsh7th/nvim-cmp",              -- autocompletion for avante commands and mentions
-    "ibhagwan/fzf-lua",              -- for file_selector provider fzf
-    "nvim-tree/nvim-web-devicons",   -- or echasnovski/mini.icons
-    "zbirenbaum/copilot.lua",        -- for providers='copilot'
+    "hrsh7th/nvim-cmp", -- autocompletion for avante commands and mentions
+    "ibhagwan/fzf-lua", -- for file_selector provider fzf
+    "nvim-tree/nvim-web-devicons", -- or echasnovski/mini.icons
+    "zbirenbaum/copilot.lua", -- for providers='copilot'
     {
       -- support for image pasting
       "HakonHarnes/img-clip.nvim",
@@ -98,7 +98,7 @@ return {
     },
     {
       -- Make sure to set this up properly if you have lazy=true
-      'MeanderingProgrammer/render-markdown.nvim',
+      "MeanderingProgrammer/render-markdown.nvim",
       opts = {
         file_types = { "markdown", "Avante" },
       },
