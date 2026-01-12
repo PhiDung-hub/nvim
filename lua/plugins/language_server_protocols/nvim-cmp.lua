@@ -5,16 +5,13 @@ return {
     "hrsh7th/cmp-buffer", -- nvim-cmp source for buffers (tab)
     "hrsh7th/cmp-cmdline", -- autocompletion for cmdline
     "tzachar/cmp-tabnine", -- support for tabnine
-    "zbirenbaum/copilot-cmp", -- support for copilot
-    "L3MON4D3/LuaSnip", -- https://github.com/L3MON4D3/LuaSnip
   },
   config = function()
     local status, cmp = pcall(require, "cmp")
     local status2, lspkind = pcall(require, "lspkind")
-    local status3, luasnip = pcall(require, "luasnip")
 
-    if not (status and status2 and status3) then
-      print("WARNING: nvim-cmp | lspkind | luasnip is unavailable.")
+    if not (status and status2) then
+      print("WARNING: nvim-cmp | lspkindis unavailable.")
       return
     end
 
@@ -37,13 +34,10 @@ return {
       snippet = {
         -- REQUIRED - you must specify a snippet engine
         expand = function(args)
-          luasnip.lsp_expand(args.body) -- For `luasnip` users.
+          vim.snippet.expand(args.body) -- For native neovim snippets (Neovim v0.10+)
         end,
       },
       mapping = cmp.mapping.preset.insert({
-        ["<C-d>"] = cmp.mapping.scroll_docs(-4),
-        ["<C-f>"] = cmp.mapping.scroll_docs(4),
-        ["<C-Space>"] = cmp.mapping.complete(),
         ["<C-e>"] = cmp.mapping.close(),
         ["<CR>"] = cmp.mapping.confirm({
           behavior = cmp.ConfirmBehavior.Replace,
@@ -70,7 +64,6 @@ return {
         { name = "nvim_lsp" },
         { name = "treesitter" },
         { name = "cmp_tabnine" },
-        { name = "copilot" },
         { name = "buffer" },
       }),
       native_menu = false,
@@ -82,37 +75,12 @@ return {
           before = function(entry, vim_item)
             vim_item.kind = lspkind.symbolic(vim_item.kind, { mode = "symbol" })
             vim_item.menu = source_mapping[entry.source.name]
-            if entry.source.name == "cmp_tabnine" then
-              local detail = (entry.completion_item.data or {}).detail
-              vim_item.kind = ""
-              if detail and detail:find(".*%%%.*") then
-                vim_item.kind = vim_item.kind .. " " .. detail
-              end
-
-              if (entry.completion_item.data or {}).multiline then
-                vim_item.kind = vim_item.kind .. " " .. "[MultiLine]"
-              end
-            end
             local maxwidth = 60
             vim_item.abbr = string.sub(vim_item.abbr, 1, maxwidth)
             return vim_item
           end,
         }),
       },
-      -- sorting = {
-      --   priority_weight = 1,
-      --   comparators = {
-      --     require("cmp_tabnine.compare"),
-      --     compare.offset,
-      --     compare.exact,
-      --     compare.score,
-      --     compare.recently_used,
-      --     compare.kind,
-      --     compare.sort_text,
-      --     compare.length,
-      --     compare.order,
-      --   },
-      -- },
     })
 
     cmp.setup.cmdline(":", {

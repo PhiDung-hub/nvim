@@ -47,6 +47,10 @@ return {
     mason_lspconfig.setup({
       ensure_installed = servers,
       automatic_installation = true,
+      -- Explicitly disable automatic setup and handlers
+      automatic_enable = {
+        exclude = { "rust_analyzer", "ts_ls" },
+      },
     })
   end,
 }

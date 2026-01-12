@@ -1,9 +1,9 @@
 return {
   "nvim-neo-tree/neo-tree.nvim",
   keys = {
-    { "<M-t>",   "<cmd>Neotree left toggle<cr>",             desc = "NeoTree Toggle" },
+    { "<M-t>", "<cmd>Neotree left toggle<cr>", desc = "NeoTree Toggle" },
     { "<S-M-G>", "<cmd>Neotree float git_status toggle<cr>", desc = "NeoTree Open Float Git Status" },
-    { "<S-M-B>", "<cmd>Neotree float buffers toggle<cr>",    desc = "NeoTree Open Float  Active Buffers" },
+    { "<S-M-B>", "<cmd>Neotree float buffers toggle<cr>", desc = "NeoTree Open Float  Active Buffers" },
     { "<S-M-T>", "<cmd>Neotree float filesystem toggle<cr>", desc = "NeoTree Open Float File System" },
   },
   config = function()
@@ -109,37 +109,42 @@ return {
       filesystem = {
         filtered_items = {
           visible = false, -- when true, they will just be displayed differently than normal items
-          hide_dotfiles = true,
+          hide_dotfiles = false,
           hide_gitignored = true,
           hide_hidden = true, -- only works on Windows for hidden files/directories
-          always_show = {     -- remains visible even if other settings would normally hide it
+          always_show = { -- remains visible even if other settings would normally hide it
             ".gitignore",
+          },
+          hide_by_name = {
+            ".DS_Store",
+            "thumbs.db",
+            ".git",
           },
         },
         follow_current_file = { enabled = true }, -- This will find and focus the file in the active buffer every
-        group_empty_dirs = false,                 -- when true, empty folders will be grouped together
-        hijack_netrw_behavior = "open_default",   -- netrw disabled, opening a directory opens neo-tree
-        use_libuv_file_watcher = false,           -- This will use the OS level file watchers to detect changes
+        group_empty_dirs = false, -- when true, empty folders will be grouped together
+        hijack_netrw_behavior = "open_default", -- netrw disabled, opening a directory opens neo-tree
+        use_libuv_file_watcher = false, -- This will use the OS level file watchers to detect changes
         commands = {
           avante_add_files = function(state)
             local node = state.tree:get_node()
             local filepath = node:get_id()
-            local relative_path = require('avante.utils').relative_path(filepath)
+            local relative_path = require("avante.utils").relative_path(filepath)
 
-            local sidebar = require('avante').get()
+            local sidebar = require("avante").get()
 
             local open = sidebar:is_open()
             -- ensure avante sidebar is open
             if not open then
-              require('avante.api').ask()
-              sidebar = require('avante').get()
+              require("avante.api").ask()
+              sidebar = require("avante").get()
             end
 
             sidebar.file_selector:add_selected_file(relative_path)
 
             -- remove neo tree buffer
             if not open then
-              sidebar.file_selector:remove_selected_file('neo-tree filesystem [1]')
+              sidebar.file_selector:remove_selected_file("neo-tree filesystem [1]")
             end
           end,
         },
@@ -156,13 +161,13 @@ return {
             ["<c-x>"] = "clear_filter",
             ["[g"] = "prev_git_modified",
             ["]g"] = "next_git_modified",
-            ["oa"] = 'avante_add_files',
+            ["oa"] = "avante_add_files",
           },
         },
       },
       buffers = {
         follow_current_file = { enabled = true }, -- This will find and focus the file in the active buffer every
-        group_empty_dirs = true,                  -- when true, empty folders will be grouped together
+        group_empty_dirs = true, -- when true, empty folders will be grouped together
         show_unloaded = true,
         window = {
           mappings = {
