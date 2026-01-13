@@ -11,17 +11,12 @@ return {
       neodev.setup({})
     end
 
-    local lspconfig_ok, lspconfig = pcall(require, "lspconfig")
-    if not lspconfig_ok then
-      print("WARNING: lspconfig is unavailable")
-      return
-    end
-
     local cmp_nvim_lsp_ok, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
     if not cmp_nvim_lsp_ok then
       print("WARNING: cmp_nvim_lsp is unavailable")
       return
     end
+
     -- Use an on_attach function to only map the following keys
     -- after the language server attaches to the current buffer
     local on_attach = function(_, bufnr)
@@ -37,7 +32,7 @@ return {
     local capabilities = cmp_nvim_lsp.default_capabilities()
 
     -- jsx/tsx/react
-    lspconfig.ts_ls.setup({
+    vim.lsp.config("ts_ls", {
       on_attach = function(client, bufnr)
         client.server_capabilities.documentFormattingProvider = false
         on_attach(client, bufnr)
@@ -54,7 +49,7 @@ return {
     })
 
     -- html & css & Tailwindcss
-    lspconfig.emmet_ls.setup({
+    vim.lsp.config("emmet_ls", {
       on_attach = on_attach,
       capabilities = capabilities,
       filetypes = { "html", "htmldjango", "typescriptreact", "javascriptreact", "css", "sass", "scss", "less" },
@@ -69,18 +64,18 @@ return {
       },
     })
     -- tailwind
-    lspconfig.tailwindcss.setup({
+    vim.lsp.config("tailwindcss", {
       on_attach = on_attach,
       capabilities = capabilities,
     })
     -- svelte
-    lspconfig.svelte.setup({
+    vim.lsp.config("svelte", {
       on_attach = on_attach,
       capabilities = capabilities,
     })
 
     -- GO
-    lspconfig.gopls.setup({
+    vim.lsp.config("gopls", {
       settings = {
         gopls = {
           gofumpt = true,
@@ -93,7 +88,7 @@ return {
     -- RUST
     -- rustfmt formatting: https://rust-lang.github.io/rustfmt
     -- rust_analyzer config: https://github.com/rust-lang/rust-analyzer/blob/master/docs/user/generated_config.adoc
-    lspconfig.rust_analyzer.setup({
+    vim.lsp.config("rust_analyzer", {
       on_attach = on_attach,
       capabilities = capabilities,
       settings = {
@@ -106,13 +101,13 @@ return {
     })
 
     -- TOML
-    lspconfig.taplo.setup({
+    vim.lsp.config("taplo", {
       on_attach = on_attach,
       capabilities = capabilities,
     })
 
     -- JSON
-    lspconfig.jsonls.setup({
+    vim.lsp.config("jsonls", {
       on_attach = on_attach,
       capabilities = capabilities,
     })
@@ -124,7 +119,7 @@ return {
 
       textDocument = { semanticHighlighting = true },
     })
-    lspconfig.clangd.setup({
+    vim.lsp.config("clangd", {
       on_attach = on_attach,
       capabilities = clangd_cap,
       filetypes = { "c", "cpp", "objc", "objcpp", "cuda" },
@@ -138,30 +133,30 @@ return {
     })
 
     -- Python
-    lspconfig.ruff.setup({
+    vim.lsp.config("ruff", {
       capabilities = capabilities,
       on_attach = on_attach,
     })
 
     -- Solidity
-    lspconfig.solidity_ls_nomicfoundation.setup({
+    vim.lsp.config("solidity_ls_nomicfoundation", {
       capabilities = capabilities,
       on_attach = on_attach,
     })
 
     -- SQL
-    lspconfig.sqlls.setup({
+    vim.lsp.config("sqlls", {
       capabilities = capabilities,
       on_attach = on_attach,
     })
 
-    lspconfig.prismals.setup({
+    vim.lsp.config("prismals", {
       capabilities = capabilities,
       on_attach = on_attach,
     })
 
-    -- JSON
-    lspconfig.yamlls.setup({
+    -- YAML
+    vim.lsp.config("yamlls", {
       on_attach = on_attach,
       capabilities = capabilities,
     })
@@ -179,7 +174,7 @@ return {
     end
 
     -- lua for neovim
-    lspconfig.lua_ls.setup({
+    vim.lsp.config("lua_ls", {
       capabilities = capabilities,
       single_file_support = true,
       on_attach = function(client, bufnr)
