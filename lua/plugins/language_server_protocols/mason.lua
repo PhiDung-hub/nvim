@@ -26,21 +26,9 @@ return {
       "tailwindcss",
       "svelte",
       "emmet_ls",
-      "yamlls",
 
-      -- languages / tools
-      "bashls",
-      "clangd",
-      "rust_analyzer",
-      "gopls",
-      "taplo",
-      "prismals",
-      "lua_ls",
-      "sqlls",
+      -- python
       "ruff",
-
-      -- solidity
-      "solidity_ls_nomicfoundation",
     }
 
     mason.setup({})
@@ -49,7 +37,7 @@ return {
       automatic_installation = true,
       -- Explicitly disable automatic setup and handlers
       automatic_enable = {
-        exclude = { "rust_analyzer", "ts_ls" },
+        exclude = { "ts_ls" },
       },
     })
   end,

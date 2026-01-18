@@ -68,17 +68,10 @@ return {
       }),
       native_menu = false,
       formatting = {
-        -- Details about function: https://github.com/onsails/lspkind.nvim/blob/master/lua/lspkind/init.lua#L167
         format = lspkind.cmp_format({
-          with_text = true,
-          max_width = 60,
-          before = function(entry, vim_item)
-            vim_item.kind = lspkind.symbolic(vim_item.kind, { mode = "symbol" })
-            vim_item.menu = source_mapping[entry.source.name]
-            local maxwidth = 60
-            vim_item.abbr = string.sub(vim_item.abbr, 1, maxwidth)
-            return vim_item
-          end,
+          mode = "symbol_text",
+          maxwidth = 60,
+          menu = source_mapping,
         }),
       },
     })

@@ -2,15 +2,8 @@ return {
   "neovim/nvim-lspconfig", -- https://github.com/neovim/nvim-lspconfig
   dependencies = {
     "hrsh7th/cmp-nvim-lsp", -- nvim-cmp source for neovim's built-in LSP.
-    "folke/neodev.nvim", -- signature help, docs and completion for the nvim lua API.
   },
   config = function()
-    -- IMPORTANT: make sure to setup neodev BEFORE lspconfig
-    local neodev_ok, neodev = pcall(require, "neodev")
-    if neodev_ok then
-      neodev.setup({})
-    end
-
     local cmp_nvim_lsp_ok, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
     if not cmp_nvim_lsp_ok then
       print("WARNING: cmp_nvim_lsp is unavailable")
@@ -74,121 +67,16 @@ return {
       capabilities = capabilities,
     })
 
-    -- GO
-    vim.lsp.config("gopls", {
-      settings = {
-        gopls = {
-          gofumpt = true,
-        },
-      },
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-
-    -- RUST
-    -- rustfmt formatting: https://rust-lang.github.io/rustfmt
-    -- rust_analyzer config: https://github.com/rust-lang/rust-analyzer/blob/master/docs/user/generated_config.adoc
-    vim.lsp.config("rust_analyzer", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-      settings = {
-        ["rust-analyzer"] = {
-          check = {
-            command = "clippy",
-          },
-        },
-      },
-    })
-
-    -- TOML
-    vim.lsp.config("taplo", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-
-    -- JSON
+    -- JSON (useful for package.json, tsconfig, etc.)
     vim.lsp.config("jsonls", {
       on_attach = on_attach,
       capabilities = capabilities,
-    })
-
-    -- cpp
-    -- Create a shallow copy of capabilities for clangd
-    local clangd_cap = vim.tbl_deep_extend("force", {}, capabilities, {
-      offsetEncoding = { "utf-16" }, -- fix: use array as expected
-
-      textDocument = { semanticHighlighting = true },
-    })
-    vim.lsp.config("clangd", {
-      on_attach = on_attach,
-      capabilities = clangd_cap,
-      filetypes = { "c", "cpp", "objc", "objcpp", "cuda" },
-      cmd = {
-        "clangd",
-        "--background-index",
-        "--pch-storage=memory",
-        "--clang-tidy",
-        "--completion-style=detailed",
-      },
     })
 
     -- Python
     vim.lsp.config("ruff", {
       capabilities = capabilities,
       on_attach = on_attach,
-    })
-
-    -- Solidity
-    vim.lsp.config("solidity_ls_nomicfoundation", {
-      capabilities = capabilities,
-      on_attach = on_attach,
-    })
-
-    -- SQL
-    vim.lsp.config("sqlls", {
-      capabilities = capabilities,
-      on_attach = on_attach,
-    })
-
-    vim.lsp.config("prismals", {
-      capabilities = capabilities,
-      on_attach = on_attach,
-    })
-
-    -- YAML
-    vim.lsp.config("yamlls", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-
-    local augroup_format = vim.api.nvim_create_augroup("Format", { clear = true })
-    local enable_format_on_save = function(_, bufnr)
-      vim.api.nvim_clear_autocmds({ group = augroup_format, buffer = bufnr })
-      vim.api.nvim_create_autocmd("BufWritePre", {
-        group = augroup_format,
-        buffer = bufnr,
-        callback = function()
-          vim.lsp.buf.format({ bufnr = bufnr })
-        end,
-      })
-    end
-
-    -- lua for neovim
-    vim.lsp.config("lua_ls", {
-      capabilities = capabilities,
-      single_file_support = true,
-      on_attach = function(client, bufnr)
-        on_attach(client, bufnr)
-        enable_format_on_save(client, bufnr)
-      end,
-      settings = {
-        Lua = {
-          diagnostics = {
-            -- Get the language server to recognize the `vim` global
-            globals = { "vim" },
-          },
-        },
-      },
     })
 
     vim.lsp.handlers["textDocument/publishDiagnostics"] = vim.lsp.with(vim.lsp.diagnostic.on_publish_diagnostics, {

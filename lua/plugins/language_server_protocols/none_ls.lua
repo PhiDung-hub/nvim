@@ -17,9 +17,7 @@ return {
     require("mason-null-ls").setup({
       ensure_installed = {
         "stylua",
-        "ruff",
         "prettierd",
-        "gofumpt",
       },
       automatic_installation = true,
     })
@@ -28,13 +26,8 @@ return {
       debug = false,
       autostart = true,
       sources = {
-        -- Lua
+        -- Lua (for nvim config editing)
         formatting.stylua,
-
-        -- Go
-        formatting.gofumpt.with({
-          extra_args = { "-l", "140" },
-        }),
 
         -- JS, JSX, TSX, etc.
         formatting.prettierd,

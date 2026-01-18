@@ -7,24 +7,6 @@ return {
     "numToStr/Comment.nvim",                       -- Comment string, enhanced default `gc` behavior.
   },
   config = function()
-    -- NOTE: for Tact-lang (TON blockchain)
-    local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
-    -- Adds tree-sitter-tact support
-    parser_config.tact = {
-      install_info = {
-        url = "~/os_packages/tree-sitter-tact", -- a path to the cloned repo
-        files = { "src/parser.c" },
-        branch = "main",
-        generate_requires_npm = false,
-        requires_generate_from_grammar = false,
-      },
-    }
-    vim.filetype.add({
-      extension = {
-        tact = "tact",
-      },
-    })
-
     local ts_installed, ts = pcall(require, "nvim-treesitter.configs")
     if not ts_installed then
       print("WARNING: nvim-treesitter is unavailable.")
@@ -81,26 +63,18 @@ return {
       auto_install = true,
       ensure_installed = {
         "lua",
-        "cpp",
-        "rust",
-        "solidity",
         "python",
         "javascript",
         "typescript",
         "tsx",
-        "sql",
         "json",
         "html",
         "css",
         "scss",
         "markdown",
         "markdown_inline",
-        "yaml",
-        "toml",
         "gitignore",
         "svelte",
-        "proto",
-        "go",
       },
 
       autotag = {
@@ -127,7 +101,5 @@ return {
         },
       },
     })
-
-    parser_config.tsx.filetype_to_parsername = { "javascript", "typescript", "javascript.jsx", "typescript.tsx" }
   end,
 }
