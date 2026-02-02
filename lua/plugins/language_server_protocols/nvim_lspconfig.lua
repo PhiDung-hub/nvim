@@ -73,11 +73,41 @@ return {
       capabilities = capabilities,
     })
 
+    -- HTML
+    vim.lsp.config("html", {
+      on_attach = on_attach,
+      capabilities = capabilities,
+    })
+
+    -- CSS
+    vim.lsp.config("cssls", {
+      on_attach = on_attach,
+      capabilities = capabilities,
+    })
+
     -- Python
     vim.lsp.config("ruff", {
       capabilities = capabilities,
       on_attach = on_attach,
     })
+
+    -- Solidity (Nomicfoundation)
+    vim.lsp.config("solidity_ls_nomicfoundation", {
+      cmd = { "nomicfoundation-solidity-language-server", "--stdio" },
+      filetypes = { "solidity" },
+      root_markers = { "hardhat.config.js", "hardhat.config.ts", "foundry.toml", ".git" },
+      on_attach = on_attach,
+      capabilities = capabilities,
+    })
+    vim.lsp.enable("solidity_ls_nomicfoundation")
+    vim.lsp.enable("ts_ls")
+    vim.lsp.enable("emmet_ls")
+    vim.lsp.enable("tailwindcss")
+    vim.lsp.enable("svelte")
+    vim.lsp.enable("jsonls")
+    vim.lsp.enable("html")
+    vim.lsp.enable("cssls")
+    vim.lsp.enable("ruff")
 
     vim.lsp.handlers["textDocument/publishDiagnostics"] = vim.lsp.with(vim.lsp.diagnostic.on_publish_diagnostics, {
       underline = true,

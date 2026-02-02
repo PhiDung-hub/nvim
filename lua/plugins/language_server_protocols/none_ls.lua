@@ -31,6 +31,9 @@ return {
 
         -- JS, JSX, TSX, etc.
         formatting.prettierd,
+
+        -- Solidity
+        formatting.forge_fmt,
       },
     })
   end,

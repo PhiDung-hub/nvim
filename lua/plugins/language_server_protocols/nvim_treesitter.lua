@@ -75,6 +75,7 @@ return {
         "markdown_inline",
         "gitignore",
         "svelte",
+        "solidity",
       },
 
       autotag = {

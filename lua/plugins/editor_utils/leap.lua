@@ -1,5 +1,5 @@
 return {
-  "ggandor/leap.nvim", -- vim motion
+  url = "https://codeberg.org/andyg/leap.nvim", -- vim motion
   enable = true,
   dependencies = {
     "tpope/vim-repeat", -- modern '.' repeat command
