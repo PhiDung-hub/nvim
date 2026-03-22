@@ -1,19 +1,9 @@
 return {
-  url = "https://codeberg.org/andyg/leap.nvim", -- vim motion
-  enable = true,
-  dependencies = {
-    "tpope/vim-repeat", -- modern '.' repeat command
+  url = "https://codeberg.org/andyg/leap.nvim",
+  dependencies = { "tpope/vim-repeat" },
+  keys = {
+    { "s", "<Plug>(leap-forward)", mode = { "n", "x", "o" }, desc = "Leap forward" },
+    { "S", "<Plug>(leap-backward)", mode = { "n", "x", "o" }, desc = "Leap backward" },
+    { "gs", "<Plug>(leap-from-window)", mode = { "n", "x", "o" }, desc = "Leap from window" },
   },
-  config = function()
-    local status, leap = pcall(require, "leap")
-    if not status then
-      print("leap.nvim not found")
-      return
-    end
-
-    -- Sneak-style mappings (replaces add_default_mappings)
-    vim.keymap.set({'n', 'x', 'o'}, 's',  '<Plug>(leap-forward)')
-    vim.keymap.set({'n', 'x', 'o'}, 'S',  '<Plug>(leap-backward)')
-    vim.keymap.set({'n', 'x', 'o'}, 'gs', '<Plug>(leap-from-window)')
-  end,
 }

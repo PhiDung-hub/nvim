@@ -1,7 +1,18 @@
 return {
   "williamboman/mason.nvim", -- LSP/DAP/Linters/Formatters installer
+  cmd = "Mason",
+  event = { "BufReadPost", "BufNewFile" },
   dependencies = {
-    "williamboman/mason-lspconfig.nvim", -- Bridge Mason <-> nvim-lspconfig
+    "williamboman/mason-lspconfig.nvim",
+    {
+      "WhoIsSethDaniel/mason-tool-installer.nvim",
+      opts = {
+        ensure_installed = {
+          "stylua",
+          "prettierd",
+        },
+      },
+    },
   },
   config = function()
     local mason_ok, mason = pcall(require, "mason")
@@ -35,7 +46,6 @@ return {
     mason_lspconfig.setup({
       ensure_installed = servers,
       automatic_installation = true,
-      -- Explicitly disable automatic setup and handlers
       automatic_enable = {
         exclude = { "ts_ls" },
       },
