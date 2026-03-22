@@ -1,10 +1,11 @@
 return {
   "nvim-treesitter/nvim-treesitter",
+  event = { "BufReadPost", "BufNewFile" },
+  build = ":TSUpdate",
   dependencies = {
-    "HiPhish/rainbow-delimiters.nvim",             -- rainbow bracket: https://github.com/HiPhish/rainbow-delimeters.nvim
-    "JoosepAlviste/nvim-ts-context-commentstring", -- tsx/jsx comment helper, use with Comment.nvim
-    "windwp/nvim-ts-autotag",                      -- auto rename tags
-    "numToStr/Comment.nvim",                       -- Comment string, enhanced default `gc` behavior.
+    "HiPhish/rainbow-delimiters.nvim",             -- rainbow brackets
+    "JoosepAlviste/nvim-ts-context-commentstring", -- tsx/jsx comment context
+    "windwp/nvim-ts-autotag",                      -- auto rename/close tags
   },
   config = function()
     local ts_installed, ts = pcall(require, "nvim-treesitter.configs")
@@ -13,46 +14,37 @@ return {
       return
     end
 
-    -- nvim-ts-rainbow plugin: https://github.com/HiPhish/rainbow-delimiters.nvim
     local rainbow_installed, delimiters = pcall(require, "rainbow-delimiters")
     if not rainbow_installed then
-      print("WARNING: ts-rainbow is unavailable.")
+      print("WARNING: rainbow-delimiters is unavailable.")
       return
     end
 
-    -- nvim-ts-autotag plugin: https://github.com/windwp/nvim-ts-autotag
-    local autotag_installed, _ = pcall(require, "nvim-ts-autotag")
-    if not autotag_installed then
-      print("WARNING: nvim-ts-autotag is unavailable")
-      return
-    end
-
-    -- nvim-ts-context-commentstring plugin: https://github.com/JoosepAlviste/nvim-ts-context-commentstring#commentnvim
-    local ts_context_installed, ts_context_commentstring = pcall(require, "ts_context_commentstring")
-    if not ts_context_installed then
-      print("WARNING: ts-context-commentstring is unavailable.")
-      return
-    end
-
-    ts_context_commentstring.setup({})
+    -- Native Neovim 0.10+ commenting with tsx/jsx context support
     vim.g.skip_ts_context_commentstring_module = true
+    require("ts_context_commentstring").setup({ enable_autocmd = false })
 
-    -- Comment plugin: https://github.com/numToStr/Comment.nvim
-    local comment_installed, comment = pcall(require, "Comment")
-    if not comment_installed then
-      print("WARNING: Comment.nvim is unavailable")
-      return
+    local get_option = vim.filetype.get_option
+    vim.filetype.get_option = function(filetype, option)
+      return option == "commentstring"
+          and require("ts_context_commentstring.internal").calculate_commentstring()
+        or get_option(filetype, option)
     end
 
-    comment.setup({
-      pre_hook = require("ts_context_commentstring.integrations.comment_nvim").create_pre_hook(),
+    -- nvim-ts-autotag (separate setup, no longer via treesitter config key)
+    require("nvim-ts-autotag").setup({
+      opts = {
+        enable_close = true,
+        enable_rename = true,
+        enable_close_on_slash = false,
+      },
     })
 
     ts.setup({
       highlight = {
         enable = true,
         disable = {},
-        additional_vim_regex_highlighting = true,
+        additional_vim_regex_highlighting = false,
       },
 
       indent = {
@@ -76,10 +68,6 @@ return {
         "gitignore",
         "svelte",
         "solidity",
-      },
-
-      autotag = {
-        enable = true,
       },
 
       rainbow = {

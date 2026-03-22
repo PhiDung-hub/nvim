@@ -1,28 +1,30 @@
 return {
   "neovim/nvim-lspconfig", -- https://github.com/neovim/nvim-lspconfig
-  dependencies = {
-    "hrsh7th/cmp-nvim-lsp", -- nvim-cmp source for neovim's built-in LSP.
-  },
   config = function()
-    local cmp_nvim_lsp_ok, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
-    if not cmp_nvim_lsp_ok then
-      print("WARNING: cmp_nvim_lsp is unavailable")
-      return
+    -- on_attach: keymaps and features enabled per-buffer when LSP attaches
+    local on_attach = function(client, bufnr)
+      -- Enable semantic tokens if supported
+      if client.server_capabilities.semanticTokensProvider then
+        vim.lsp.semantic_tokens.start(bufnr, client.id)
+      end
+
+      -- Native document highlights (replaces vim-illuminate)
+      if client.server_capabilities.documentHighlightProvider then
+        local hl_group = vim.api.nvim_create_augroup("lsp-highlight-" .. bufnr, { clear = true })
+        vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
+          buffer = bufnr,
+          group = hl_group,
+          callback = vim.lsp.buf.document_highlight,
+        })
+        vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+          buffer = bufnr,
+          group = hl_group,
+          callback = vim.lsp.buf.clear_references,
+        })
+      end
     end
 
-    -- Use an on_attach function to only map the following keys
-    -- after the language server attaches to the current buffer
-    local on_attach = function(_, bufnr)
-      -- Mappings.
-      local opts = { noremap = true, silent = true, buffer = bufnr }
-
-      vim.keymap.set("n", "<leader>f", function()
-        vim.lsp.buf.format({ async = true })
-      end, opts)
-    end
-
-    -- Set up completion using nvim_cmp with LSP source
-    local capabilities = cmp_nvim_lsp.default_capabilities()
+    -- blink.cmp auto-injects capabilities into all LSP servers
 
     -- jsx/tsx/react
     vim.lsp.config("ts_ls", {
@@ -38,58 +40,28 @@ return {
         "typescriptreact",
         "typescript.tsx",
       },
-      capabilities = capabilities,
     })
 
     -- html & css & Tailwindcss
     vim.lsp.config("emmet_ls", {
       on_attach = on_attach,
-      capabilities = capabilities,
       filetypes = { "html", "htmldjango", "typescriptreact", "javascriptreact", "css", "sass", "scss", "less" },
       init_options = {
         html = {
           options = {
-            -- For possible options, see: https://github.com/emmetio/emmet/blob/master/src/config.ts#L79-L284
             ["bem.enabled"] = true,
             ["jsx.enabled"] = true,
           },
         },
       },
     })
-    -- tailwind
-    vim.lsp.config("tailwindcss", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-    -- svelte
-    vim.lsp.config("svelte", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
 
-    -- JSON (useful for package.json, tsconfig, etc.)
-    vim.lsp.config("jsonls", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-
-    -- HTML
-    vim.lsp.config("html", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-
-    -- CSS
-    vim.lsp.config("cssls", {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    })
-
-    -- Python
-    vim.lsp.config("ruff", {
-      capabilities = capabilities,
-      on_attach = on_attach,
-    })
+    vim.lsp.config("tailwindcss", { on_attach = on_attach })
+    vim.lsp.config("svelte", { on_attach = on_attach })
+    vim.lsp.config("jsonls", { on_attach = on_attach })
+    vim.lsp.config("html", { on_attach = on_attach })
+    vim.lsp.config("cssls", { on_attach = on_attach })
+    vim.lsp.config("ruff", { on_attach = on_attach })
 
     -- Solidity (Nomicfoundation)
     vim.lsp.config("solidity_ls_nomicfoundation", {
@@ -97,8 +69,8 @@ return {
       filetypes = { "solidity" },
       root_markers = { "hardhat.config.js", "hardhat.config.ts", "foundry.toml", ".git" },
       on_attach = on_attach,
-      capabilities = capabilities,
     })
+
     vim.lsp.enable("solidity_ls_nomicfoundation")
     vim.lsp.enable("ts_ls")
     vim.lsp.enable("emmet_ls")
@@ -109,33 +81,20 @@ return {
     vim.lsp.enable("cssls")
     vim.lsp.enable("ruff")
 
-    vim.lsp.handlers["textDocument/publishDiagnostics"] = vim.lsp.with(vim.lsp.diagnostic.on_publish_diagnostics, {
+    vim.diagnostic.config({
       underline = true,
       virtual_text = { spacing = 4, prefix = "" },
       severity_sort = true,
-    })
-
-    -- Diagnostic symbols in the sign column (gutter)
-    local signs = { Error = "", Warn = "", Hint = "💡", Info = "" }
-    for type, icon in pairs(signs) do
-      local hl = "DiagnosticSign" .. type
-      -- Link the highlight group to the corresponding Diagnostic highlight
-      vim.api.nvim_set_hl(0, hl, { link = "Diagnostic" .. type })
-
-      -- Define the sign safely
-      -- WARN: Migrated to neovim 0.11+
-      if vim.api.nvim_set_sign then
-        vim.api.nvim_set_sign(hl, {
-          text = icon,
-          texthl = hl,
-          numhl = "",
-        })
-      end
-    end
-
-    vim.diagnostic.config({
       float = {
-        source = "if_many", -- Or "if_many"
+        source = "if_many",
+      },
+      signs = {
+        text = {
+          [vim.diagnostic.severity.ERROR] = "",
+          [vim.diagnostic.severity.WARN] = "",
+          [vim.diagnostic.severity.HINT] = "💡",
+          [vim.diagnostic.severity.INFO] = "",
+        },
       },
     })
   end,
