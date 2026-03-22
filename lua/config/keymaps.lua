@@ -1,70 +1,53 @@
--- Add any additional keymaps here
-local M = require("helpers.keymap")
-
-local nnoremap = M.nnoremap
-local vnoremap = M.vnoremap
-local inoremap = M.inoremap
--- local tnoremap = M.tnoremap
+local map = vim.keymap.set
 
 -- Exit terminal mode
--- tnoremap("<Esc><leader>", "<C-\\><C-n>")
-vim.keymap.set("t", "<Esc><leader>", "<C-\\><C-n>", { nowait = true, noremap = true })
+map("t", "<Esc><leader>", "<C-\\><C-n>", { nowait = true })
 
 -- Visual block mode
-nnoremap("q", "<C-v>")
+map("n", "q", "<C-v>")
 
 -- Tab
-inoremap("<S-tab>", "<C-d>")
+map("i", "<S-tab>", "<C-d>")
 
--- Go to start and end of line in insert mode.
-inoremap("<C-Down>", "<Home>")
-inoremap("<C-Up>", "<End>")
+-- Go to start and end of line in insert mode
+map("i", "<C-Down>", "<Home>")
+map("i", "<C-Up>", "<End>")
 
--- window and file management
-nnoremap("<C-a>", "gg<S-v>G") -- select all
-nnoremap("<F3>", "gg=G<C-o>") -- reformat entire file with F3
+-- Window and file management
+map("n", "<C-a>", "gg<S-v>G") -- select all
+map("n", "<F3>", "gg=G<C-o>") -- reformat entire file
 
 -- Split window vertical
-nnoremap("sv", ":vsplit<CR><C-w>w")
+map("n", "sv", ":vsplit<CR><C-w>w")
 
 -- Move window
-nnoremap("zh", "<C-w>h")
-nnoremap("zk", "<C-w>k")
-nnoremap("zj", "<C-w>j")
-nnoremap("zl", "<C-w>l")
+map("n", "zh", "<C-w>h")
+map("n", "zk", "<C-w>k")
+map("n", "zj", "<C-w>j")
+map("n", "zl", "<C-w>l")
 
--- Copy and paste
--- This option is set in window terminal and directly affect neovim
-nnoremap("<C-c>", '"+y')
-vnoremap("<C-c>", '"+y')
+-- Copy to system clipboard
+map("n", "<C-c>", '"+y')
+map("v", "<C-c>", '"+y')
 
--- Deletion
-inoremap("<C-H>", "<C-w>") -- C-H == C-BS https://www.reddit.com/r/neovim/comments/okbag3/comment/h58k9p7/?utm_source=share&utm_medium=web2x&context=3
+-- Deletion (C-H == C-BS)
+map("i", "<C-H>", "<C-w>")
 
--- Do, undo.
-inoremap("<C-Z>", "<C-O>u")
-nnoremap("<C-Z>", "u")
-inoremap("<C-Y>", "<C-O><C-R>")
+-- Undo / Redo
+map("i", "<C-Z>", "<C-O>u")
+map("n", "<C-Z>", "u")
+map("i", "<C-Y>", "<C-O><C-R>")
 
--- press Ctrl-S to save
-inoremap("<C-S>", "<ESC>:w<CR>a")
-vnoremap("<C-S>", "<ESC>:w<CR>gv")
-nnoremap("<C-S>", ":w<CR>")
+-- Save
+map("i", "<C-S>", "<ESC>:w<CR>a")
+map("v", "<C-S>", "<ESC>:w<CR>gv")
+map("n", "<C-S>", ":w<CR>")
 
 -- Move lines up and down
-nnoremap("<C-m-k>", ":m .-2<CR>==")
-vnoremap("<C-m-j>", ":m '>+1<CR>gv=gv")
-vnoremap("<C-m-k>", ":m '<-2<CR>gv=gv")
-nnoremap("<C-m-j>", ":m .+1<CR>==")
+map("n", "<C-m-k>", ":m .-2<CR>==")
+map("v", "<C-m-j>", ":m '>+1<CR>gv=gv")
+map("v", "<C-m-k>", ":m '<-2<CR>gv=gv")
+map("n", "<C-m-j>", ":m .+1<CR>==")
 
--- Using Markdown Preview
-nnoremap("<leader>p", ":MarkdownPreview<CR>")
-
--- Avante AI shortcuts
-nnoremap("<leader>ac", "<Plug>(AvanteChat)")    -- Open chat window (primary)
-nnoremap("<leader>aa", "<Plug>(AvanteAsk)")     -- Ask AI in floating window
-nnoremap("<leader>an", "<Plug>(AvanteAskNew)")  -- New chat session
-nnoremap("<leader>ae", "<Plug>(AvanteEdit)")    -- Edit selection with AI
-nnoremap("<leader>ar", "<Plug>(AvanteRefresh)") -- Refresh context
-nnoremap("<leader>at", "<Plug>(AvanteToggle)")  -- Toggle sidebar
-nnoremap("<leader>af", "<Plug>(AvanteFocus)")   -- Focus chat window
+-- Markdown preview
+map("n", "<leader>p", ":MarkdownPreview<CR>")

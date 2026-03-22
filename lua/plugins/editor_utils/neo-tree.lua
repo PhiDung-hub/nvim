@@ -1,5 +1,6 @@
 return {
   "nvim-neo-tree/neo-tree.nvim",
+  dependencies = { "MunifTanjim/nui.nvim" },
   keys = {
     { "<M-t>", "<cmd>Neotree left toggle<cr>", desc = "NeoTree Toggle" },
     { "<S-M-G>", "<cmd>Neotree float git_status toggle<cr>", desc = "NeoTree Open Float Git Status" },
@@ -125,29 +126,6 @@ return {
         group_empty_dirs = false, -- when true, empty folders will be grouped together
         hijack_netrw_behavior = "open_default", -- netrw disabled, opening a directory opens neo-tree
         use_libuv_file_watcher = false, -- This will use the OS level file watchers to detect changes
-        commands = {
-          avante_add_files = function(state)
-            local node = state.tree:get_node()
-            local filepath = node:get_id()
-            local relative_path = require("avante.utils").relative_path(filepath)
-
-            local sidebar = require("avante").get()
-
-            local open = sidebar:is_open()
-            -- ensure avante sidebar is open
-            if not open then
-              require("avante.api").ask()
-              sidebar = require("avante").get()
-            end
-
-            sidebar.file_selector:add_selected_file(relative_path)
-
-            -- remove neo tree buffer
-            if not open then
-              sidebar.file_selector:remove_selected_file("neo-tree filesystem [1]")
-            end
-          end,
-        },
         window = {
           mappings = {
             ["<bs>"] = "navigate_up",
@@ -161,7 +139,6 @@ return {
             ["<c-x>"] = "clear_filter",
             ["[g"] = "prev_git_modified",
             ["]g"] = "next_git_modified",
-            ["oa"] = "avante_add_files",
           },
         },
       },
