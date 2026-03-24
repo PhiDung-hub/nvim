@@ -8,8 +8,8 @@ return {
     { "gr", "<cmd>Lspsaga rename<CR>", desc = "Rename" },
     { "gd", "<cmd>Lspsaga goto_definition<CR>", desc = "Goto definition" },
     { "<leader>o", "<cmd>Lspsaga outline<CR>", desc = "Outline" },
-    { "<leader>ci", "<cmd>Lspsaga incoming_calls<CR>", desc = "Incoming calls" },
-    { "<leader>co", "<cmd>Lspsaga outgoing_calls<CR>", desc = "Outgoing calls" },
+    { "<leader>li", "<cmd>Lspsaga incoming_calls<CR>", desc = "Incoming calls" },
+    { "<leader>lo", "<cmd>Lspsaga outgoing_calls<CR>", desc = "Outgoing calls" },
   },
   opts = {
     rename = { quit = "<C-c>", exec = "<CR>", mark = "x", confirm = "<CR>", in_select = true },
