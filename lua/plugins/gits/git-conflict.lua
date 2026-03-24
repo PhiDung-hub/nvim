@@ -1,7 +1,7 @@
 return {
   "akinsho/git-conflict.nvim",
   version = "*",
-  event = "BufReadPost",
+  event = "VeryLazy",
   keys = {
     { "<leader>gx", "<cmd>GitConflictListQf<CR>", desc = "List git conflicts in quickfix" },
     { "]x", "<cmd>GitConflictNextConflict<CR>", desc = "Next conflict" },

@@ -1,7 +1,7 @@
 return {
   "williamboman/mason.nvim", -- LSP/DAP/Linters/Formatters installer
   cmd = "Mason",
-  event = { "BufReadPost", "BufNewFile" },
+  event = "VeryLazy",
   dependencies = {
     "williamboman/mason-lspconfig.nvim",
     {
