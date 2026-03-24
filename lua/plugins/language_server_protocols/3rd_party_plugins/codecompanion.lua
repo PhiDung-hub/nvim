@@ -13,17 +13,17 @@ return {
   },
   opts = {
     adapters = {
-      anthropic = function()
-        return require("codecompanion.adapters").extend("anthropic", {
+      gemini = function()
+        return require("codecompanion.adapters").extend("gemini", {
           schema = {
-            model = { default = "claude-sonnet-4-20250514" },
+            model = { default = "gemini-2.5-flash-preview-05-20" },
           },
         })
       end,
     },
     strategies = {
-      chat = { adapter = "anthropic" },
-      inline = { adapter = "anthropic" },
+      chat = { adapter = "gemini" },
+      inline = { adapter = "gemini" },
     },
     extensions = {
       mcphub = {
