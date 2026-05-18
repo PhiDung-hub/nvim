@@ -40,6 +40,9 @@ return {
 
       -- python
       "ruff",
+
+      -- sui move
+      "move_analyzer",
     }
 
     mason.setup({})

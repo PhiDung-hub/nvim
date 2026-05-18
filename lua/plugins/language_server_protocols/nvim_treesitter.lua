@@ -68,6 +68,7 @@ return {
         "gitignore",
         "svelte",
         "solidity",
+        "move",
       },
 
       rainbow = {

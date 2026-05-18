@@ -71,7 +71,17 @@ return {
       on_attach = on_attach,
     })
 
+    -- Sui Move
+    vim.filetype.add({ extension = { move = "move" } })
+    vim.lsp.config("move_analyzer", {
+      cmd = { "move-analyzer" },
+      filetypes = { "move" },
+      root_markers = { "Move.toml", ".git" },
+      on_attach = on_attach,
+    })
+
     vim.lsp.enable("solidity_ls_nomicfoundation")
+    vim.lsp.enable("move_analyzer")
     vim.lsp.enable("ts_ls")
     vim.lsp.enable("emmet_ls")
     vim.lsp.enable("tailwindcss")
