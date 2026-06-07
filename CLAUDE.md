@@ -1,252 +1,133 @@
-# Neovim Configuration Documentation
+# Neovim Configuration
 
-## Overview
-This is a performance-focused Neovim configuration built with Lazy.nvim, emphasizing fast startup times and stable workflow. The config is optimized for development with comprehensive LSP support, intelligent completion, and minimal visual clutter.
+Performance-focused Neovim config on **Lazy.nvim**, optimized for fast startup. Aggressive lazy-loading, minimal startup plugins, comprehensive LSP/completion.
 
 ## Architecture
 
-### Core Files
-- `init.lua` - Main entry point, loads config modules
-- `lua/config/lazy.lua` - Lazy.nvim bootstrap and core settings (28 lines of optimized vim.opt)
-- `lua/config/keymaps.lua` - Global keybindings and shortcuts
-- `lua/helpers/keymap.lua` - Keymap utility functions
+Entry: `init.lua` → `vim.loader.enable()`, then `require("config.lazy")` and `require("config.keymaps")`.
 
-### Directory Structure
 ```
 ~/.config/nvim/
-├── init.lua                                    # Entry point
+├── init.lua                                   # Entry point
 ├── lua/
 │   ├── config/
-│   │   ├── lazy.lua                           # Core settings + Lazy.nvim setup
-│   │   └── keymaps.lua                        # Global keybindings
-│   ├── helpers/
-│   │   ├── keymap.lua                         # Keymap helpers
-│   │   └── icons.lua                          # Icon definitions
+│   │   ├── lazy.lua                           # Lazy bootstrap + all vim.opt settings + spec imports
+│   │   └── keymaps.lua                        # Global keybindings (local map = vim.keymap.set)
+│   ├── helpers/{keymap,icons}.lua
 │   ├── plugins/
-│   │   ├── init.lua                           # Global dependencies
-│   │   ├── aesthetics/                        # UI & visual plugins
-│   │   ├── editor_utils/                      # Editor enhancement plugins
-│   │   ├── language_server_protocols/         # LSP & completion
-│   │   └── gits/                              # Git integration
-│   └── snippets/
-│       ├── cpp.lua                            # C++ snippets
-│       └── rust.lua                           # Rust snippets
-├── lazy-lock.json                             # Plugin version lock
-└── CLAUDE.md                                  # This file
+│   │   ├── init.lua                           # Startup dep: plenary.nvim only
+│   │   ├── aesthetics/                        # kanagawa (+color_schemes/), indent-blankline, web-devicons
+│   │   ├── editor_utils/                      # neo-tree, telescope, toggleterm, which-key,
+│   │   │                                      #   lualine, autopairs, bigfile
+│   │   ├── language_server_protocols/         # LSP, blink.cmp, conform, lspsaga, mason,
+│   │   │   └── 3rd_party_plugins/             #   nvim-lint, treesitter, render-markdown / supermaven
+│   │   └── gits/                              # gitsigns
+│   └── snippets/{cpp,rust}.lua
+└── lazy-lock.json
 ```
 
-## Performance Profile
+Spec imports (in `lua/config/lazy.lua`): `plugins`, `plugins.editor_utils`, `plugins.language_server_protocols`, `plugins.language_server_protocols.3rd_party_plugins`, `plugins.gits`, `plugins.aesthetics`, `plugins.aesthetics.color_schemes`.
 
-### Fast Startup Strategy
-- **Lazy loading**: Most plugins load on events/commands/keys
-- **Minimal core**: Only plenary.nvim and nui.nvim load at startup
-- **Optimized settings**: Essential vim.opt configurations in lua/config/lazy.lua:28-94
+## Core Settings (`lua/config/lazy.lua`)
 
-### Plugin Loading Pattern
-```lua
--- Event-driven
-InsertEnter     → blink.cmp, supermaven (inline AI)
-BufReadPre      → bigfile.nvim (large-file guard)
-LspAttach       → lspsaga, signature
+- **Leader / localleader**: `<Space>`
+- **Performance**: `updatetime=200`, `timeoutlen=300`, `pumheight=10`, `undolevels=5000`
+- **Indent**: 2 spaces, `expandtab`, `smartindent`, `autoindent`
+- **Search**: `ignorecase` + `smartcase`, `incsearch`, `hlsearch`
+- **Folding**: native treesitter — `foldmethod=expr`, `foldexpr=v:lua.vim.treesitter.foldexpr()`, `foldlevel=99` (all open)
+- **UI**: `number`+`relativenumber`, `signcolumn=yes`, `termguicolors`, `laststatus=0`, `conceallevel=3`, `scrolloff=10`
+- **Clipboard**: Linux `xsel` integration
+- `vim.loader.enable()` for faster module loading
 
--- Key-driven
-<M-t>           → neo-tree
-<A-->           → toggleterm
+## Plugins
 
--- Command-driven
-:Telescope      → telescope
+Only **plenary.nvim** loads at startup (`plugins/init.lua`). Everything else is lazy-loaded.
 
--- Filetype-driven
-markdown        → render-markdown.nvim (inline render)
+### Lazy-load triggers
+```
+InsertEnter         → blink.cmp, supermaven, autopairs
+InsertEnter/Cmdline → blink.cmp
+BufReadPre          → bigfile.nvim (large-file guard)
+BufReadPost/NewFile → gitsigns, treesitter
+VeryLazy            → lualine, indent-blankline, which-key, mason, nvim-lint
+LspAttach           → lspsaga
+ft=markdown         → render-markdown.nvim
+keys/cmd            → neo-tree, telescope, toggleterm, conform
 ```
 
-## Core Settings (lua/config/lazy.lua:28-94)
+### Notable plugins
+- **blink.cmp** — completion engine (replaces nvim-cmp). Sources: lsp, path, snippets, buffer.
+- **supermaven-nvim** — inline ghost-text AI (the only AI plugin). Tab handled by blink (see Completion).
+- **conform.nvim** — formatting (replaces none-ls), format-on-save via `BufWritePre`.
+- **nvim-lspconfig + mason** — LSP. **lspsaga** — LSP UI (hover/finder/rename/outline).
+- **nvim-treesitter** (master branch, pinned) — highlight/indent/folding; rainbow-delimiters, ts-context-commentstring, ts-autotag deps.
+- **neo-tree** — file explorer (async scan tuned for large trees). **telescope** — fuzzy finder.
+- **bigfile.nvim** — disables heavy features on files >1.5 MB.
+- **render-markdown.nvim** — inline in-buffer markdown rendering (replaces browser preview).
+- **kanagawa** colorscheme (priority 1000), **lualine**, **gitsigns**, **which-key**, **toggleterm**, **autopairs**, **indent-blankline**, **web-devicons**.
 
-### Performance Optimizations
-- `updatetime = 200` - Fast CursorHold events
-- `timeoutlen = 300` - Quick key sequence timeout
-- `pumheight = 10` - Limit completion popup size
-- `undolevels = 5000` - Reasonable undo history
+## LSP / Mason
 
-### Editor Behavior
-- **Leader key**: `<Space>`
-- **Indentation**: 2 spaces, smart indent
-- **Search**: Case-insensitive with smart case
-- **Folding**: UFO-nvim with level 99
-- **Clipboard**: Linux xsel integration
+Servers configured **and** enabled in `nvim_lspconfig.lua` (native `vim.lsp.config`/`vim.lsp.enable`, nvim 0.11+ API):
+`ts_ls`, `emmet_ls`, `tailwindcss`, `svelte`, `jsonls`, `html`, `cssls`, `ruff` (Python), `solidity_ls_nomicfoundation`, `move_analyzer` (Sui Move).
 
-## Plugin Categories
+- `ts_ls` document formatting is disabled (conform/prettier handles it).
+- `solidity_ls_nomicfoundation` and `move_analyzer` use custom `cmd`s and are **not** installed by Mason (system/manual install).
+- Mason `ensure_installed` (servers): cssls, html, jsonls, ts_ls, tailwindcss, svelte, emmet_ls, ruff, move_analyzer. Mason tools: `stylua`, `prettierd`.
+- `on_attach` enables semantic tokens + native document highlights (CursorHold) when supported.
 
-### Essential Core (Always Active)
-```lua
-"nvim-lua/plenary.nvim"     -- Lua utilities
-"MunifTanjim/nui.nvim"      -- UI components
+## Formatters & Linters
+
+- **conform.nvim** (`formatters_by_ft`): `lua→stylua`; `js/jsx/ts/tsx/json/html/css/scss/markdown/yaml/svelte → prettierd` (falls back to prettier, `stop_after_first`); `solidity → forge_fmt`. Format-on-save + `<leader>f`.
+- **nvim-lint**: `solidity → solhint` only, on `BufEnter`/`TextChanged`/`InsertLeave` for `*.sol`.
+
+## Treesitter
+
+`ensure_installed` (16, `auto_install=true`): lua, python, javascript, typescript, tsx, json, html, css, scss, markdown, markdown_inline, gitignore, svelte, solidity, move.
+- **Sui Move** parser registered from `tzakian/tree-sitter-move` (not in registry).
+- **Big-file backstop**: `highlight.disable` skips TS highlighting on files **>512 KB** (distinct from bigfile.nvim's 1.5 MB feature cutoff).
+
+## Completion & AI
+
+**blink.cmp** keymaps (`blink_cmp.lua`):
+- `<Tab>` — accept selected (or first) menu item with LSP auto-import; if no menu, accept the supermaven inline suggestion; else literal tab
+- `<Up>`/`<Down>` and `<C-n>`/`<C-p>` — navigate menu
+- `<CR>` accept · `<C-e>` cancel · `<C-b>`/`<C-f>` scroll docs
+
+**supermaven** (`disable_keymaps=true`, Tab owned by blink): `<C-j>` accept word · `<C-]>` clear suggestion.
+
+## Key Mappings (`lua/config/keymaps.lua`)
+
 ```
-
-### LSP Stack (Medium Impact)
-- **nvim-lspconfig** - Core LSP functionality
-- **mason.nvim** - Language server management (18+ servers)
-- **nvim-cmp** - Completion engine with multiple sources
-- **nvim-treesitter** - Syntax highlighting (20+ languages)
-- **none-ls.nvim** - Formatting (stylua, black, prettier, gofumpt)
-
-### Editor Enhancements (Low Impact)
-- **telescope.nvim** - Fuzzy finder (lazy-loaded)
-- **neo-tree.nvim** - File explorer (lazy-loaded, async scan for large trees)
-- **toggleterm** - Terminal integration
-- **bigfile.nvim** - Disables heavy features on files >1.5 MB
-- Folding via native treesitter `foldexpr` (no plugin)
-
-### AI & Completion
-- **supermaven-nvim** - Inline ghost-text AI (only AI extension kept)
-- **blink.cmp** - Completion engine; `<Tab>` accepts menu item or inline suggestion
-
-### Aesthetics (Minimal Impact)
-- **kanagawa.nvim** - Active colorscheme (no italics)
-- **lualine.nvim** - Status line
-- **nvim-web-devicons** - File icons
-- **indent-blankline** - Indent guides
-
-## Key Mappings
-
-### Global Shortcuts (lua/config/keymaps.lua)
-```vim
-" Core Navigation
-q                   → Visual block mode (remapped from <C-v>)
-zh/zk/zj/zl        → Window navigation
-sv                 → Vertical split
+" Navigation / windows
+q                  → visual block mode (<C-v>)
+zh/zk/zj/zl        → window left/up/down/right
+sv                 → vertical split
 
 " Editing
-<C-a>              → Select all
-<F3>               → Reformat entire file
-<C-c>              → Copy to system clipboard
-<C-s>              → Save file
-<C-z>              → Undo
-<C-y>              → Redo
-<C-m-j>/<C-m-k>    → Move lines up/down
-
-" Terminal
-<Esc><leader>      → Exit terminal mode
-
-" Markdown
-<leader>p          → Toggle inline markdown render (markdown buffers)
+<C-a>              → select all
+<F3>               → reformat file (gg=G)
+<C-c>              → copy to system clipboard (n/v)
+<C-s>              → save (n/i/v)
+<C-z> / <C-y>      → undo / redo
+<C-m-k>/<C-m-j>    → move line up/down
+<Esc><leader>      → exit terminal mode
 ```
-
-### Plugin-Specific Keys
-```vim
-<M-t>              → Neo-tree toggle
-za/zR/zM          → Folding (native treesitter foldexpr)
-<A-->             → ToggleTerm
-<A-x>             → LSP signature toggle
-```
-
-## Language Support
-
-### LSP Servers (via Mason)
-- **Web**: typescript, html, css, tailwindcss, svelte
-- **System**: lua_ls, bashls, jsonls, yamlls
-- **Compiled**: rust_analyzer, clangd, gopls
-- **Data**: sqlls, taplo (TOML)
-- **Mobile**: kotlin_language_server
-- **Blockchain**: solidity
-
-### Formatters (via none-ls)
-- **Lua**: stylua
-- **Python**: black
-- **JavaScript/TypeScript**: prettier
-- **Go**: gofumpt
-
-### Linters
-- **Solidity**: solhint (via nvim-lint)
-
-## Performance Recommendations
-
-### Current Bottlenecks
-1. **Avante AI assistant** - Heavy VeryLazy loading
-2. **TabNine completion** - External service calls
-3. **Treesitter auto-install** - 20+ language parsers
-4. **Mason auto-install** - 18+ language servers
-
-### Optimization Options
-```lua
--- Reduce Treesitter languages to only used ones
-ensure_installed = { "lua", "javascript", "typescript", "rust", "go" }
-
--- Disable unused Mason servers
--- Remove servers for languages you don't use
-
--- Consider disabling TabNine if not needed
--- Heavy resource usage for AI completion
-
--- Lazy-load Avante more aggressively
--- Only when AI assistance is explicitly needed
-```
-
-### Current Config Strengths
-- Excellent lazy-loading strategy
-- Minimal startup plugins (only 2 core deps)
-- Event-driven plugin activation
-- Optimized vim.opt settings
-- Clean separation of concerns
-
-## Workflow Commands
-
-### Development
-```vim
-:Mason              → Manage language servers
-:Lazy               → Plugin management
-:Telescope          → Fuzzy find files/text
-:RenderMarkdown     → Toggle inline markdown render
-```
-
-### AI Assistance
-```vim
-<leader>ac          → Open chat window (primary)
-<leader>aa          → Ask AI in floating window
-<leader>an          → New chat session
-<leader>ae          → Edit selection with AI
-<leader>ar          → Refresh context
-<leader>at          → Toggle sidebar
-<leader>af          → Focus chat window
-
-# Project Context Commands
-@file              → Include current file (works)
-@diagnostics       → Include error context (works)
-@codebase          → Project context (limited - see notes)
-```
-
-### Git
-```vim
-:DiffviewOpen       → Git diff viewer
-:Gitsigns           → Git line indicators (auto)
-```
+Plugin keys: `<M-t>` neo-tree, `<S-M-G/B/T>` neo-tree floats · telescope `;f` files `;r` grep `\\` buffers `;t` help `;;` resume `;e` diagnostics · lspsaga `K gf gp gr gd <leader>o` · `<leader>f` format · `<leader>p` markdown render (markdown buffers) · `<m-->` toggleterm.
 
 ## Maintenance
 
-### Plugin Updates
 ```bash
-# Update all plugins
-nvim +Lazy sync +qa
-
-# Check plugin status
-nvim +Lazy +qa
+nvim +Lazy sync +qa      # update plugins
+nvim +Lazy clean +qa     # remove plugins no longer in spec
+nvim +Mason +qa          # manage language servers
+nvim --startuptime startup.log   # profile startup
 ```
+`:Lazy profile` · `:LspInfo` · `:ConformInfo`.
 
-### LSP Management
-```bash
-# Update language servers
-nvim +Mason +qa
-```
+## Gotchas
 
-### Performance Monitoring
-- Startup time: Use `nvim --startuptime startup.log`
-- Plugin impact: `:Lazy profile`
-- LSP status: `:LspInfo`
-
-## Notes
-- Configuration prioritizes stability and speed over features
-- AI completion available but resource-aware (TabNine limited to 10 results)
-- Clipboard integration optimized for Linux (xsel)
-- Folding enhanced with UFO for better code navigation
-- Git integration lightweight but functional
-- Aesthetic plugins kept minimal to reduce visual noise
+- **Treesitter pinned to `master`** — the `main` branch is a full rewrite needing nvim 0.12+ nightly and breaks the `nvim-treesitter.configs` API used here.
+- **Folding is native** (treesitter foldexpr), no folding plugin. `za`/`zR`/`zM` are native commands.
+- **Tab is shared**: blink.cmp owns `<Tab>` and delegates to supermaven when no completion menu is open. Don't re-bind `<Tab>` in supermaven.
+- Solidity/Move language servers are not Mason-managed — ensure `nomicfoundation-solidity-language-server` and `move-analyzer` are on `PATH`.
