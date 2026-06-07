@@ -45,22 +45,19 @@ This is a performance-focused Neovim configuration built with Lazy.nvim, emphasi
 ### Plugin Loading Pattern
 ```lua
 -- Event-driven
-BufReadPost     → bufferline, illuminate
-VeryLazy        → avante (AI assistant)
+InsertEnter     → blink.cmp, supermaven (inline AI)
+BufReadPre      → bigfile.nvim (large-file guard)
 LspAttach       → lspsaga, signature
 
--- Key-driven  
-<leader>e       → neo-tree
-za, zR, zM      → nvim-ufo (folding)
-<C-A-o>         → zen-mode
+-- Key-driven
+<M-t>           → neo-tree
+<A-->           → toggleterm
 
 -- Command-driven
 :Telescope      → telescope
-:Trouble        → trouble
 
 -- Filetype-driven
-markdown        → markdown-preview
-tact            → tact.vim
+markdown        → render-markdown.nvim (inline render)
 ```
 
 ## Core Settings (lua/config/lazy.lua:28-94)
@@ -95,16 +92,14 @@ tact            → tact.vim
 
 ### Editor Enhancements (Low Impact)
 - **telescope.nvim** - Fuzzy finder (lazy-loaded)
-- **neo-tree.nvim** - File explorer (lazy-loaded)
-- **leap.nvim** - Advanced motion
-- **nvim-ufo** - Code folding enhancement
-- **bufferline** - Buffer tabs
+- **neo-tree.nvim** - File explorer (lazy-loaded, async scan for large trees)
 - **toggleterm** - Terminal integration
+- **bigfile.nvim** - Disables heavy features on files >1.5 MB
+- Folding via native treesitter `foldexpr` (no plugin)
 
-### AI & Completion (High Impact)
-- **avante.nvim** - AI coding assistant (Gemini provider, separate windows, project indexing)
-- **cmp-tabnine** - TabNine completion (max 10 results)
-- **copilot.lua** - DISABLED for performance
+### AI & Completion
+- **supermaven-nvim** - Inline ghost-text AI (only AI extension kept)
+- **blink.cmp** - Completion engine; `<Tab>` accepts menu item or inline suggestion
 
 ### Aesthetics (Minimal Impact)
 - **kanagawa.nvim** - Active colorscheme (no italics)
@@ -134,14 +129,13 @@ sv                 → Vertical split
 <Esc><leader>      → Exit terminal mode
 
 " Markdown
-<leader>p          → Markdown preview
+<leader>p          → Toggle inline markdown render (markdown buffers)
 ```
 
 ### Plugin-Specific Keys
 ```vim
-<leader>e          → Neo-tree toggle
-<C-A-o>           → Zen mode
-za/zR/zM          → UFO folding
+<M-t>              → Neo-tree toggle
+za/zR/zM          → Folding (native treesitter foldexpr)
 <A-->             → ToggleTerm
 <A-x>             → LSP signature toggle
 ```
@@ -202,8 +196,7 @@ ensure_installed = { "lua", "javascript", "typescript", "rust", "go" }
 :Mason              → Manage language servers
 :Lazy               → Plugin management
 :Telescope          → Fuzzy find files/text
-:Trouble            → View diagnostics
-:MarkdownPreview    → Preview markdown files
+:RenderMarkdown     → Toggle inline markdown render
 ```
 
 ### AI Assistance

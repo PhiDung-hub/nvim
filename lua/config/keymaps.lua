@@ -49,5 +49,5 @@ map("v", "<C-m-j>", ":m '>+1<CR>gv=gv")
 map("v", "<C-m-k>", ":m '<-2<CR>gv=gv")
 map("n", "<C-m-j>", ":m .+1<CR>==")
 
--- Markdown preview
-map("n", "<leader>p", ":MarkdownPreview<CR>")
+-- Markdown inline render toggle (<leader>p) is defined in the
+-- render-markdown.nvim spec, scoped to markdown buffers.

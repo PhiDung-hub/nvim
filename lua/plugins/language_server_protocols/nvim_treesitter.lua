@@ -59,7 +59,12 @@ return {
     ts.setup({
       highlight = {
         enable = true,
-        disable = {},
+        -- Backstop below bigfile.nvim's threshold: skip TS highlighting on
+        -- large/minified files (>512 KB) that would otherwise stutter.
+        disable = function(_, buf)
+          local ok, stats = pcall(vim.loop.fs_stat, vim.api.nvim_buf_get_name(buf))
+          return ok and stats and stats.size > 512 * 1024
+        end,
         additional_vim_regex_highlighting = false,
       },
 

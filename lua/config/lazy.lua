@@ -100,11 +100,14 @@ vim.filetype.add({
   pattern = {},
 })
 
--- For UFO-nvim (folding)
+-- Native Treesitter folding (replaces nvim-ufo)
 opt.foldcolumn = "1"
 opt.foldlevel = 99
 opt.foldlevelstart = 99
 opt.foldenable = true
+opt.foldmethod = "expr"
+opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
+opt.foldtext = ""
 
 -- Define the clipboard settings for WSL
 vim.g.clipboard = {
