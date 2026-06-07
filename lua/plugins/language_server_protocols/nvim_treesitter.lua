@@ -1,5 +1,8 @@
 return {
   "nvim-treesitter/nvim-treesitter",
+  -- Pin to master: the `main` branch is a full rewrite that requires nvim 0.12+
+  -- nightly and breaks the `nvim-treesitter.configs` API used below.
+  branch = "master",
   event = { "BufReadPost", "BufNewFile" },
   build = ":TSUpdate",
   dependencies = {
@@ -39,6 +42,19 @@ return {
         enable_close_on_slash = false,
       },
     })
+
+    -- Sui Move grammar — not in nvim-treesitter's master registry. Register
+    -- tzakian/tree-sitter-move (archived but stable; covers Sui Move syntax).
+    -- Semantic refinements come from move-analyzer LSP attached separately.
+    local parsers = require("nvim-treesitter.parsers").get_parser_configs()
+    parsers.move = {
+      install_info = {
+        url = "https://github.com/tzakian/tree-sitter-move",
+        files = { "src/parser.c" },
+        branch = "main",
+      },
+      filetype = "move",
+    }
 
     ts.setup({
       highlight = {
