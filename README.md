@@ -4,4 +4,4 @@ My personal neovim config.
 
 ## Includes
 + Custom LazyNvim set up
-+ LSP configs, Tree browser, Telescope, Markdown preview, and editor utils (debugger, code outline, code highlights, etc..) 
++ LSP configs, tree browser, fff file and content search, Telescope buffers/help/diagnostics, Markdown preview, and editor utils.

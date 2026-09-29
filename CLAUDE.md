@@ -4,7 +4,7 @@ Performance-focused Neovim config on **Lazy.nvim**, optimized for fast startup. 
 
 ## Architecture
 
-Entry: `init.lua` → `vim.loader.enable()`, then `require("config.lazy")` and `require("config.keymaps")`.
+Entry: `init.lua` → `vim.loader.enable()`, then `require("config.lazy")`, `require("config.keymaps")`, and `require("config.file_reload")`.
 
 ```
 ~/.config/nvim/
@@ -12,15 +12,16 @@ Entry: `init.lua` → `vim.loader.enable()`, then `require("config.lazy")` and `
 ├── lua/
 │   ├── config/
 │   │   ├── lazy.lua                           # Lazy bootstrap + all vim.opt settings + spec imports
-│   │   └── keymaps.lua                        # Global keybindings (local map = vim.keymap.set)
+│   │   ├── keymaps.lua                        # Global keybindings (local map = vim.keymap.set)
+│   │   └── file_reload.lua                    # Check active file for external writes
 │   ├── plugins/
 │   │   ├── init.lua                           # plenary.nvim (lazy, on require)
 │   │   ├── aesthetics/                        # kanagawa (+color_schemes/), indent-blankline,
 │   │   │                                      #   web-devicons, colorizer, todo-comments
-│   │   ├── editor_utils/                      # neo-tree, telescope, toggleterm, which-key, lualine,
+│   │   ├── editor_utils/                      # neo-tree, fff, telescope, toggleterm, which-key, lualine,
 │   │   │                                      #   autopairs, bigfile, bufferline, persistence
 │   │   ├── language_server_protocols/         # LSP, blink.cmp, conform, lspsaga, mason,
-│   │   │   └── 3rd_party_plugins/             #   nvim-lint, treesitter, render-markdown / supermaven, codecompanion
+│   │   │   └── 3rd_party_plugins/             #   nvim-lint, treesitter, render-markdown, codecompanion
 │   │   └── gits/                              # gitsigns
 └── lazy-lock.json
 ```
@@ -44,25 +45,24 @@ Everything is lazy-loaded — zero startup plugins (plenary is `lazy = true`, pu
 
 ### Lazy-load triggers
 ```
-InsertEnter         → blink.cmp, supermaven, autopairs
+InsertEnter         → blink.cmp, autopairs
 InsertEnter/Cmdline → blink.cmp
 BufReadPre          → bigfile.nvim (large-file guard), persistence
 BufReadPost/NewFile → gitsigns, treesitter, bufferline
 VeryLazy            → lualine, indent-blankline, which-key, mason, nvim-lint, colorizer, todo-comments
 LspAttach           → lspsaga
 ft=markdown         → render-markdown.nvim
-keys/cmd            → neo-tree, telescope, toggleterm, conform, codecompanion
+keys/cmd            → neo-tree, fff, telescope, toggleterm, conform, codecompanion
 ```
 
 ### Notable plugins
 - **blink.cmp** — completion engine (replaces nvim-cmp). Sources: lsp, path, snippets, buffer.
-- **supermaven-nvim** — inline ghost-text AI. Accept handled by blink (see Completion).
 - **codecompanion.nvim** — AI chat/inline over OpenRouter free models (needs `OPENROUTER_API_KEY`). `<leader>aa` toggle chat, `<leader>ae` add selection.
 - **conform.nvim** — formatting (replaces none-ls), format-on-save via `BufWritePre`.
 - **nvim-lspconfig + mason** — LSP. **lspsaga** — LSP UI (hover/finder/rename/outline).
 - **nvim-treesitter** (master branch, pinned) — highlight/indent/folding; rainbow-delimiters, ts-context-commentstring, ts-autotag deps.
-- **neo-tree** — file explorer (async scan tuned for large trees). **telescope** — fuzzy finder.
-- **bigfile.nvim** — disables heavy features on files >1.5 MB.
+- **neo-tree** — file explorer (async scan tuned for large trees). **fff** — file and content search. **telescope** — buffers, help, and diagnostics.
+- **bigfile.nvim** — disables heavy features from about 1.5 MiB, without turning off matchparen globally; gitsigns skips these buffers. Files that grow past the cutoff are reclassified on reread.
 - **render-markdown.nvim** — inline in-buffer markdown rendering (replaces browser preview).
 - **kanagawa** colorscheme (priority 1000), **lualine**, **gitsigns**, **which-key**, **toggleterm**, **autopairs**, **indent-blankline**, **web-devicons**.
 - **bufferline** (buffer tabs, normal-mode `<Tab>`/`<S-Tab>` cycle), **persistence** (sessions, `<leader>qs`/`<leader>ql`), **todo-comments**, **colorizer** (catgoose fork).
@@ -86,16 +86,18 @@ Servers configured **and** enabled in `nvim_lspconfig.lua` (native `vim.lsp.conf
 
 `ensure_installed` (16, `auto_install=true`): lua, python, javascript, typescript, tsx, json, html, css, scss, markdown, markdown_inline, gitignore, svelte, solidity, move.
 - **Sui Move** parser registered from `tzakian/tree-sitter-move` (not in registry).
-- **Big-file backstop**: `highlight.disable` skips TS highlighting on files **>512 KB** (distinct from bigfile.nvim's 1.5 MB feature cutoff).
+- **Big-file backstop**: `highlight.disable` skips TS highlighting on files **>512 KiB** (below bigfile.nvim's roughly 1.5 MiB cutoff).
+
+## External file changes
+
+`autoread` reloads an unchanged buffer after another process writes its file. `file_reload.lua` checks the active file every second and on focus, buffer entry, or terminal exit. Buffers with unsaved edits keep those edits and receive Neovim's normal change warning.
 
 ## Completion & AI
 
 **blink.cmp** keymaps (`blink_cmp.lua`):
-- `<Right>` — accept selected (or first) menu item with LSP auto-import; if no menu, accept the supermaven inline suggestion; else literal right (normal-mode `<Tab>` belongs to bufferline)
+- `<Right>` — accept selected (or first) menu item with LSP auto-import; else literal right (normal-mode `<Tab>` belongs to bufferline)
 - `<Up>`/`<Down>` and `<C-n>`/`<C-p>` — navigate menu
 - `<CR>` accept · `<C-e>` cancel · `<C-b>`/`<C-f>` scroll docs
-
-**supermaven** (`disable_keymaps=true`, accept owned by blink's `<Right>`): `<C-j>` accept word · `<C-]>` clear suggestion.
 
 ## Key Mappings (`lua/config/keymaps.lua`)
 
@@ -114,7 +116,7 @@ sv                 → vertical split
 <C-m-k>/<C-m-j>    → move line up/down
 <Esc><leader>      → exit terminal mode
 ```
-Plugin keys: `<M-t>` neo-tree, `<S-M-G/B/T>` neo-tree floats · telescope `;f` files `;r` grep `\\` buffers `;t` help `;;` resume `;e` diagnostics (preview shows line numbers) · lspsaga `K gf gp gr gd <leader>o` · `<leader>f` format · `<leader>p` markdown render (markdown buffers) · `<m-->` toggleterm.
+Plugin keys: `<M-t>` neo-tree, `<S-M-G/B/T>` neo-tree floats · fff `;f` files `;r` grep `;;` resume (preview shows line numbers) · telescope `\\` buffers `;t` help `;e` diagnostics · lspsaga `K gf gp gr gd <leader>o` · `<leader>f` format · `<leader>p` markdown render (markdown buffers) · `<m-->` toggleterm.
 
 ## Maintenance
 
@@ -130,6 +132,6 @@ nvim --startuptime startup.log   # profile startup
 
 - **Treesitter pinned to `master`** — the `main` branch is a full rewrite needing nvim 0.12+ nightly and breaks the `nvim-treesitter.configs` API used here.
 - **Folding is native** (treesitter foldexpr), no folding plugin. `za`/`zR`/`zM` are native commands.
-- **Accept key is shared**: blink.cmp owns insert-mode `<Right>` and delegates to supermaven when no completion menu is open. Don't re-bind accept in supermaven. Normal-mode `<Tab>`/`<S-Tab>` cycle bufferline buffers.
+- **Completion accept**: blink.cmp owns insert-mode `<Right>` in editing buffers. Normal-mode `<Tab>`/`<S-Tab>` cycle bufferline buffers.
 - **Stale parsers shadow the plugin**: never leave compiled parsers in `~/.local/share/nvim/site/parser/` — that dir precedes nvim-treesitter on the runtimepath and outdated `.so` files break its queries (e.g. `Invalid node type "except*"`).
 - Solidity/Move language servers are not Mason-managed — ensure `nomicfoundation-solidity-language-server` and `move-analyzer` are on `PATH`.

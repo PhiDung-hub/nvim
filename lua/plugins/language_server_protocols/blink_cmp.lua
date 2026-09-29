@@ -9,20 +9,12 @@ return {
     keymap = {
       preset = "none",
       -- Right arrow accepts the highlighted item (or the first one if none
-      -- is selected, applying any LSP auto-import edits). When the menu is
-      -- closed it accepts the Supermaven inline suggestion instead, and
-      -- otherwise falls back to a literal <Right>.
+      -- is selected, applying any LSP auto-import edits). Otherwise it
+      -- falls back to a literal <Right>.
       ["<Right>"] = {
         function(cmp)
           if cmp.is_menu_visible() then
             return cmp.select_and_accept()
-          end
-          local ok, preview = pcall(require, "supermaven-nvim.completion_preview")
-          if ok and preview.has_suggestion() then
-            vim.schedule(function()
-              preview.on_accept_suggestion()
-            end)
-            return true
           end
         end,
         "fallback",

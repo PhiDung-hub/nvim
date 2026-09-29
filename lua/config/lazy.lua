@@ -26,6 +26,7 @@ local opt = vim.opt
 
 -- General settings
 opt.autowrite = true           -- Enable auto write
+opt.autoread = true            -- Reload unchanged buffers after external writes
 opt.conceallevel = 3           -- Hide * markup for bold and italic
 opt.confirm = true             -- Confirm to save changes before exiting modified buffer
 opt.formatoptions = "jcroqlnt" -- tcqj
