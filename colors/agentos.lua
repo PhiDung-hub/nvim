@@ -184,6 +184,15 @@ local hl = {
   GitAdd = { fg = t.green },
   GitChange = { fg = t.yellow },
   GitDelete = { fg = t.red },
+  -- lua/git/graph.lua: lane colours cycle, HEAD node, faint sha column.
+  AosGraphLane1 = { fg = t.blue },
+  AosGraphLane2 = { fg = t.magenta },
+  AosGraphLane3 = { fg = t.green },
+  AosGraphLane4 = { fg = t.yellow },
+  AosGraphLane5 = { fg = t.cyan },
+  AosGraphLane6 = { fg = t.red },
+  AosGraphHead = { fg = t.cyan, bold = true },
+  AosGraphSha = { fg = blend(t.magenta, 0.65) },
 
   NeoTreeNormal = { fg = t.text },
   NeoTreeNormalNC = { fg = t.text },
