@@ -103,58 +103,6 @@ return {
     end,
   },
   {
-    "nvim-neo-tree/neo-tree.nvim",
-    branch = "v3.x",
-    dependencies = { "nvim-lua/plenary.nvim", "MunifTanjim/nui.nvim" },
-    cmd = "Neotree",
-    keys = {
-      { "<M-t>", "<cmd>Neotree left toggle<cr>", desc = "Tree" },
-      { "<S-M-B>", "<cmd>Neotree float buffers toggle<cr>", desc = "Tree buffers" },
-      { "<S-M-T>", "<cmd>Neotree float filesystem toggle<cr>", desc = "Tree filesystem" },
-    },
-    init = function()
-      -- Replaces netrw: open the tree when nvim starts on a directory.
-      vim.api.nvim_create_autocmd("BufEnter", {
-        once = true,
-        callback = function(ev)
-          if vim.fn.isdirectory(ev.file) == 1 then require("neo-tree") end
-        end,
-      })
-    end,
-    opts = {
-      popup_border_style = "single",
-      enable_diagnostics = true,
-      default_component_configs = {
-        indent = { indent_marker = "│", last_indent_marker = "└", expander_collapsed = "▸", expander_expanded = "▾" },
-        modified = { symbol = "●" },
-        git_status = {
-          symbols = {
-            added = "+", modified = "~", deleted = "✗", renamed = "→",
-            untracked = "?", ignored = "·", unstaged = "!", staged = "✓", conflict = "⊘",
-          },
-        },
-      },
-      event_handlers = {
-        { event = "neo_tree_buffer_enter", handler = function() vim.wo.relativenumber = true end },
-      },
-      git_status_async = true,
-      git_status_async_options = { batch_size = 250, batch_delay = 10, max_lines = 100000 },
-      filesystem = {
-        async_directory_scan = "always",
-        use_libuv_file_watcher = false,
-        follow_current_file = { enabled = true },
-        hijack_netrw_behavior = "open_current",
-        filtered_items = {
-          hide_dotfiles = false,
-          hide_gitignored = true,
-          always_show = { ".gitignore" },
-          hide_by_name = { ".DS_Store", "thumbs.db", ".git" },
-        },
-      },
-      buffers = { follow_current_file = { enabled = true }, group_empty_dirs = true, show_unloaded = true },
-    },
-  },
-  {
     "dmtrKovalenko/fff",
     tag = "v0.11.0",
     build = function() require("fff.download").download_or_build_binary() end,

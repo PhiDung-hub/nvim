@@ -1,6 +1,6 @@
 # Neovim Configuration
 
-Neovim 0.12 config on **lazy.nvim**. Nine upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 12 ms headless.
+Neovim 0.12 config on **lazy.nvim**. Six upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 12 ms headless.
 
 ## Design
 
@@ -24,12 +24,13 @@ lua/core/lsp.lua         which servers to enable, TypeScript routing, LSP keymap
 lua/core/treesitter.lua  FileType → vim.treesitter.start + indentexpr (size-guarded)
 lua/core/format.lua      external formatters + LSP fallback, solhint diagnostics
 lua/core/edit.lua        autopairs, tag auto-close, #rrggbb swatches
+lua/ui/tree.lua          async file tree (sidebar/float): capped libuv reads, git, diagnostics, watches
 lua/ui/pick.lua          fuzzy picker with optional preview pane; also vim.ui.select
 lua/ui/lsp.lua           LSP/syntax UI: hover, peek, finder, outline, breadcrumbs, rename, calls, inspect
 lua/ui/fix.lua           quick fix: cursor-line hint, apply/pick with diff preview, fix-all, Codex/agent fallback
 lua/ui/tabline.lua       buffers + status segments
 lua/ui/term.lua          float terminal
-lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for neo-tree/fff
+lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for fff
 lua/ui/markdown.lua      in-buffer markdown rendering (extmarks from the markdown parsers)
 lua/agent/               Claude/Codex co-working (below)
 lua/git/                 VS Code-style git (below): repo, signs, scm, diff, merge, graph, branch
@@ -37,7 +38,7 @@ lua/git/                 VS Code-style git (below): repo, signs, scm, diff, merg
 
 ## Plugins (lua/plugins.lua)
 
-9 upstream plugins (lazy.nvim included). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
+6 upstream plugins (lazy.nvim included). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
 
 ```
 lazy.nvim                       plugin manager                    13.4k Lua · needs git
@@ -45,13 +46,10 @@ lazy.nvim                       plugin manager                    13.4k Lua · n
 ├── lean.nvim                   Lean LSP + infoview, *.lean        15.1k Lua · ships its own lsp/leanls.lua · needs lean/lake (elan)
 ├── mason.nvim                  installer, on :Mason only          15.0k Lua · bin/ prepended to PATH
 ├── nvim-treesitter  main       parser install + queries + indent   4.6k Lua + queries · needs tree-sitter CLI ≥0.26, cc
-├── neo-tree.nvim  v3.x         file tree, cmd/keys                23.8k Lua · icons via the local devicons shim
-│   ├── plenary.nvim            plenary.job/async (hard require)   13.1k Lua
-│   └── nui.nvim                windows/popups (hard require)       6.9k Lua
 └── fff  v0.11.0                file/content search, keys          10.2k Lua + native libfff_nvim.so (download_or_build)
 ```
 
-Hard edges: neo-tree → plenary, nui, `nvim-web-devicons` (satisfied by `lua/nvim-web-devicons.lua`). Soft edges (`pcall`): fff → devicons shim/plenary.filetype. Nothing else requires another plugin. The removed plugins (nvim-web-devicons, render-markdown, nvim-lspconfig) stay on disk until `Lazy! clean`.
+Soft edges (`pcall`): fff → devicons shim/plenary.filetype; without plenary it uses `vim.filetype.match` and extension fallbacks. No remaining plugin requires nui or plenary. Removed plugins (neo-tree, nui, plenary, nvim-web-devicons, render-markdown, nvim-lspconfig) remain on disk; the spec and lockfile no longer load them.
 
 External tools outside lazy: language servers and formatters in `~/.local/share/nvim/mason/bin` (copilot-language-server, lua-language-server, pyright, ruff, rust-analyzer fallback, stylua, prettierd, taplo, yaml/json/html/css/svelte/tailwind/emmet/bash/prisma servers…), rustup `rust-analyzer`, TypeScript 7 `tsc`, `llama-server` + model in `~/.local/share/llama`, `codex`, `wezterm`, `rg`, `git`, `wl-copy`/`xsel`, `solhint`, `forge`.
 
@@ -59,14 +57,14 @@ External tools outside lazy: language servers and formatters in `~/.local/share/
 
 | # | Plugin(s) | Local replacement | Effort | Notes |
 |---|---|---|---|---|
-| 1 | neo-tree + nui + plenary | `ui/tree.lua`: libuv scan, git status from `git.repo`, split sidebar | medium | removes three plugins at once |
+| 1 ✓ done | neo-tree + nui + plenary | `ui/tree.lua`: async libuv tree, `git.repo` status, sidebar/float | medium | six upstream plugins remain |
 | 2 | fff | `ui/pick` + `rg --files` / `rg --vimgrep`, frecency from `v:oldfiles` | medium | loses fff's native scorer |
 | 3 | mason | `:Tools` installing via npm/cargo/pip into one bin dir | medium | keep the existing bin dir on PATH |
 | 4 | lazy.nvim | `vim.pack` (built into nvim 0.12) | medium | lockfile and lazy-loading move to local code |
 | 5 | blink.cmp | native `vim.lsp.completion` + small path/buffer sources | large | fuzzy ranking is the hard part |
 | — | nvim-treesitter, lean.nvim | keep | — | queries/parser builds and the Lean infoview are too large to own |
 
-Replaced locally already: nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`.
+Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`.
 
 Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
 
@@ -134,7 +132,9 @@ Ghost text tagged with its source (`● local` green, `● copilot` dim, `● co
 
 ## Keys (lua/config/keymaps.lua)
 
-`q` visual block · `zh/zj/zk/zl` windows · `sv` vsplit · `<C-a>` select all · `<F3>` reindent · `<C-c>` copy · `<C-s>` save · `<C-z>/<C-y>` undo/redo · `<C-m-j/k>` move lines · `<Tab>/<S-Tab>` buffers · `<leader>1-5`/`<leader>0` go to buffer · `<C-q>`/`db` close · `dlb`/`drb` close left/right · `\\` buffers · `;t` help · `;e` diagnostics · `;f`/`;r`/`;;` fff · `<M-t>` tree · `<m-->` terminal · `<leader>f` format · `<leader>qs`/`<leader>ql` sessions · `<leader>p` / `:Markdown` toggle markdown rendering.
+`q` visual block · `zh/zj/zk/zl` windows · `sv` vsplit · `<C-a>` select all · `<F3>` reindent · `<C-c>` copy · `<C-s>` save · `<C-z>/<C-y>` undo/redo · `<C-m-j/k>` move lines · `<Tab>/<S-Tab>` buffers · `<leader>1-5`/`<leader>0` go to buffer · `<C-q>`/`db` close · `dlb`/`drb` close left/right · `\\` buffers · `;t` help · `;e` diagnostics · `;f`/`;r`/`;;` fff · `<M-t>` tree sidebar · `<S-M-T>` tree float · `<S-M-B>` buffer picker · `<m-->` terminal · `<leader>f` format · `<leader>qs`/`<leader>ql` sessions · `<leader>p` / `:Markdown` toggle markdown rendering.
+
+Tree: `<CR>`/`l`/`o` open or fold, `h` parent/collapse, `s`/`S` splits, `t` tab, `P` preview without leaving, `a` add (`/` creates a directory), `r` rename, `d` trash (confirmation before permanent fallback), `c`/`x`/`p` copy/cut/paste, `y`/`Y` relative/absolute path, `H` gitignored, `R` refresh, `z` collapse all, `.` root here, `-` root up, `/` live filter of loaded names, `g?` help, `q` close. `nvim .` replaces netrw in place. Sidebar width starts at 32 and is remembered for this session; the float uses ground with a square border. Scans read batches of 128, retain at most 2,000 entries per directory (plus an omitted-count row), and cut off at 3 s. Reveal can load a path beyond the cap. Expanded directories and git metadata are watched with a 150 ms debounce; closing/collapsing stops their watches. Git reads share `git.repo`'s budget; staged letters carry `✓`, unstaged letters stand alone.
 
 ## Commands (lua/config/commands.lua)
 

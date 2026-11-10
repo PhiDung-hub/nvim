@@ -42,6 +42,10 @@ map("n", "\\\\", pick.buffers, { desc = "Buffers" })
 map("n", ";t", pick.help, { desc = "Help tags" })
 map("n", ";e", pick.diagnostics, { desc = "Diagnostics" })
 
+map("n", "<M-t>", function() require("ui.tree").toggle() end, { desc = "Tree" })
+map("n", "<S-M-T>", function() require("ui.tree").toggle(true) end, { desc = "Tree float" })
+map("n", "<S-M-B>", pick.buffers, { desc = "Buffers" })
+
 -- Tools
 map({ "n", "t" }, "<m-->", require("ui.term").toggle, { desc = "Terminal" })
 map("n", "<S-M-G>", function() require("git.scm").toggle() end, { desc = "Source Control" })

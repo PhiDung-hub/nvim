@@ -7,7 +7,7 @@ local TABS = { "Editor", "LSP & Fix", "Git", "Agent", "AI", "Popups", "Vim" }
 local MODES = { "n", "x", "s", "o", "i", "c", "t" }
 local KNOWN = {
   "git.scm", "git.diff", "git.merge", "git.signs", "git.graph", "git.branch",
-  "ui.lsp", "ui.fix", "ui.pick", "ui.term", "ui.keys", "agent", "agent.view", "agent.review",
+  "ui.tree", "ui.lsp", "ui.fix", "ui.pick", "ui.term", "ui.keys", "agent", "agent.view", "agent.review",
 }
 local OWNED = { ui = true, git = true, agent = true, core = true, config = true }
 local S = {}
@@ -60,7 +60,6 @@ local CMD_TEXT = {
   Mason = "installer",
   MasonInstall = "install a tool",
   MasonUpdate = "update the registry",
-  Neotree = "file tree",
   FFFFind = "find files (path or query)",
   FFFResume = "resume the last file search",
   FFFScan = "rescan files",
