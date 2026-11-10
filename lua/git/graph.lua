@@ -8,6 +8,7 @@ local pick = require("ui.pick")
 local ns = vim.api.nvim_create_namespace("git.graph")
 local fns = vim.api.nvim_create_namespace("git.graph.float")
 local PAGE, RELOAD, LANES, MAX_LANES, MAX_FILES = 400, 2000, 6, 20, 500
+local BUDGET, BIG_BYTES, BIG_LINES, MAX_HUNKS = 3000, 1.5 * 1024 * 1024, 50000, 2000
 local FORMAT = "%H%x00%P%x00%D%x00%an%x00%at%x00%s"
 local UNBORN = { "does not have any commits", "unknown revision", "bad revision 'HEAD'" }
 local DIFFOPT = "internal,filler,closeoff,algorithm:histogram,linematch:60,inline:char"
@@ -230,13 +231,21 @@ local function fit(text, room)
   return room < 1 and "" or vim.fn.strcharpart(text, 0, room - 1) .. "…"
 end
 
-local function build_line(c, width)
-  local b = S.filter == "" and with_art(c.art, c.art_hl) or with_art("●", { { 0, #"●", c.head and "AosGraphHead" or lane_hl(c.node) } })
-  add(b, " ")
-  for _, r in ipairs(c.refs) do
+-- Chips take at most half the row; the rest fold into one faint "+k" so the subject and right columns stay.
+local function add_chips(b, refs, width)
+  for i, r in ipairs(refs) do
+    if vim.api.nvim_strwidth(table.concat(b.parts) .. r.text) >= width / 2 then
+      return add(b, "+" .. (#refs - i + 1) .. " ", "AosFaint")
+    end
     add(b, r.text, r.hl)
     add(b, " ")
   end
+end
+
+local function build_line(c, width)
+  local b = S.filter == "" and with_art(c.art, c.art_hl) or with_art("●", { { 0, #"●", c.head and "AosGraphHead" or lane_hl(c.node) } })
+  add(b, " ")
+  add_chips(b, c.refs, width)
   local right = { { c.author, "AosDim" }, { ago(c.time), "AosSha" }, { c.sha:sub(1, 7), "AosGraphSha" } }
   local used = vim.api.nvim_strwidth(table.concat(b.parts))
   local function right_width() return vim.iter(right):fold(0, function(n, r) return n + 2 + vim.api.nvim_strwidth(r[1]) end) end
@@ -289,28 +298,38 @@ local function note(g, hl, text) return g .. " · " .. text, { { 0, #g, hl } } e
 
 local LOADING_FILES = { { note = { "◆", "AosRunning", "loading…", "AosDim" } } }
 
--- Rebuilds the buffer from S.commits; highlights are drawn per visible line by the decoration provider.
-local function render()
+local function status_note(empty)
+  if S.error then return note("✗", "AosFailed", (vim.trim(S.error):gsub("\n", " "))) end
+  if S.slow then return note("○", "AosDim", "log paused · slow repo") end
+  if S.loading then return note("◆", "AosRunning", "loading…") end
+  if empty then return note("○", "AosDim", S.filter ~= "" and ("no match for " .. S.filter) or "no commits yet") end
+  if not S.done then return note("▸", "AosDim", "more on scroll") end
+end
+
+-- Rebuilds the buffer from S.commits, or with `from` only the rows of commits from that index on (a page
+-- appended, the rows above unchanged); highlights are drawn per visible line by the decoration provider.
+local function render(from)
   if not (S and vim.api.nvim_buf_is_valid(S.buf)) then return end
   local width = vim.api.nvim_win_is_valid(S.win) and vim.api.nvim_win_get_width(S.win) - 2 or 120
-  local lines, hls, rows = {}, {}, {}
+  local base, lines = from and S.body or 0, {}
+  if base == 0 then S.hls, S.rows, from = {}, {}, 1 end
   local function push(row, text, hl)
-    local n = #lines + 1
-    lines[n], hls[n], rows[n] = text, hl, row
+    lines[#lines + 1] = text
+    S.hls[base + #lines], S.rows[base + #lines] = hl, row
   end
-  for _, c in ipairs(S.commits) do
+  for i = from, #S.commits do
+    local c = S.commits[i]
     if matches(c) then push({ c = c }, commit_line(c, width)) end
     local files = matches(c) and S.open[c.sha] and (S.files[c.sha] or LOADING_FILES) or {}
     for _, f in ipairs(files) do push({ c = c, f = f }, file_line(c, f)) end
   end
-  if S.error then push(nil, note("✗", "AosFailed", (vim.trim(S.error):gsub("\n", " "))))
-  elseif S.slow then push(nil, note("○", "AosDim", "log paused · slow repo"))
-  elseif S.loading then push(nil, note("◆", "AosRunning", "loading…"))
-  elseif #lines == 0 then push(nil, note("○", "AosDim", S.filter ~= "" and ("no match for " .. S.filter) or "no commits yet"))
-  elseif not S.done then push(nil, note("▸", "AosDim", "more on scroll")) end
-  S.hls, S.rows = hls, rows
+  S.body = base + #lines
+  local text, hl = status_note(S.body == 0)
+  if text then push(nil, text, hl) end
+  for n = base + #lines + 1, S.total or 0 do S.hls[n], S.rows[n] = nil, nil end
+  S.total = base + #lines
   vim.bo[S.buf].modifiable = true
-  vim.api.nvim_buf_set_lines(S.buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(S.buf, base, -1, false, lines)
   vim.bo[S.buf].modifiable = false
 end
 
@@ -347,19 +366,26 @@ local function anchor()
   return row and { sha = row.c.sha, path = row.f and row.f.path, line = line, upto = #S.commits }
 end
 
--- Puts the cursor back on the row it was on before a refresh or when the graph last closed; pages keep loading
--- (each its own budgeted run) until as many commits are back as there were then.
+local function find_row(last)
+  for i, row in ipairs(S.rows) do
+    if row.c.sha == last.sha and (row.f and row.f.path) == last.path then return i end
+  end
+end
+
+-- Puts the cursor back on the row it was on before a refresh or when the graph last closed. When `chase` is set,
+-- pages keep loading until as many commits are back as there were then, but only for BUDGET ms in all.
 local function restore()
   local last = S.restore
   if not (last and vim.api.nvim_win_is_valid(S.win)) then return end
-  for i, row in ipairs(S.rows) do
-    if row.c.sha == last.sha and (row.f and row.f.path) == last.path then
-      S.restore = nil
-      return vim.api.nvim_win_set_cursor(S.win, { i, 0 })
-    end
+  local i = find_row(last)
+  if i then
+    S.restore = nil
+    return vim.api.nvim_win_set_cursor(S.win, { i, 0 })
   end
-  if not S.done and not S.slow and #S.commits < (last.upto or 0) + PAGE then return load() end
+  local late = vim.uv.now() - last.started + (S.page_ms or 0) > BUDGET
+  if last.chase and not late and not S.done and not S.slow and #S.commits < (last.upto or 0) + PAGE then return load() end
   S.restore = nil
+  if last.chase and late then quiet("position not restored · slow repo") end
   vim.api.nvim_win_set_cursor(S.win, { math.min(last.line, vim.api.nvim_buf_line_count(S.buf)), 0 })
 end
 
@@ -382,18 +408,20 @@ local function loaded(reset, count, ok, out, err, slow)
   S.loading = false
   if slow then
     S.slow, S.reset = true, nil
-    return render()
+    render(#S.commits + 1)
+    return restore()
   end
-  if reset then S.restore, S.commits, S.loaded, S.lanes, S.color, S.reset = anchor() or S.restore, {}, {}, {}, 0, nil end
+  if reset then S.commits, S.loaded, S.lanes, S.color, S.reset = {}, {}, {}, 0, nil end
   if not ok and not unborn(err) then S.error = err end
-  local n = 0
+  local n, from = 0, #S.commits + 1
+  S.page_ms = vim.uv.now() - S.page_at
   for line in out:gmatch("[^\n]+") do
     local c = parse(line)
     layout(c)
     S.commits[#S.commits + 1], S.loaded[c.sha], n = c, true, n + 1
   end
   S.done = not ok or n < count
-  render()
+  render(not reset and from or nil)
   restore()
 end
 
@@ -413,14 +441,15 @@ function load()
     stdin = frontier()
     if #stdin == 0 then
       S.done = true
-      return render()
+      render(#S.commits + 1)
+      return restore()
     end
     args[#args + 1] = "--stdin"
   end
   args[#args + 1] = "--"
-  S.loading = true
+  S.loading, S.page_at = true, vim.uv.now()
   job("log", args, function(...) loaded(reset, count, ...) end, { feature = "graph", stdin = stdin and table.concat(stdin, "\n") .. "\n" })
-  render()
+  render(not reset and #S.commits + 1 or nil)
 end
 
 -- Refreshes only when a ref or HEAD moved, so focus and file events cost one `show-ref` on a big repo; also
@@ -442,8 +471,13 @@ local function check()
   end, { feature = "graph refs" })
 end
 
+-- A pending restore keeps its start time, so refreshes during a chase never extend it.
 function M.refresh()
   if not S then return end
+  if not (S.restore and S.restore.started) then
+    S.restore = anchor() or S.restore
+    if S.restore then S.restore.started, S.restore.chase = vim.uv.now(), true end
+  end
   S.reset, S.done, S.loading, S.error, S.slow, S.refs, S.tips, S.want = true, false, false, nil, nil, nil, nil, nil
   repo.status(S.root, function(st)
     if not S then return end
@@ -530,7 +564,7 @@ end
 
 local function other_side()
   local w = S and S.diff and S.diff.wins
-  if w then vim.api.nvim_set_current_win(w[vim.api.nvim_get_current_win() == w[1] and 2 or 1]) end
+  if w and #w == 2 then vim.api.nvim_set_current_win(w[vim.api.nvim_get_current_win() == w[1] and 2 or 1]) end
 end
 
 -- { lhs, fn (nil: a native key listed for help), what it does }.
@@ -552,14 +586,13 @@ local function map_keys(buf, list)
   end
 end
 
-local function scratch(name, text, path)
+local function scratch(name, text)
   local buf = vim.api.nvim_create_buf(false, true)
   local lines = vim.split(text, "\n", { plain = true })
   if lines[#lines] == "" then table.remove(lines) end
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   pcall(vim.api.nvim_buf_set_name, buf, name)
   vim.bo[buf].bufhidden, vim.bo[buf].modifiable = "wipe", false
-  vim.bo[buf].filetype = vim.filetype.match({ filename = path, buf = buf }) or ""
   return buf
 end
 
@@ -572,49 +605,86 @@ local function first_change(win)
   end)
 end
 
+local function title(verb, path, rev)
+  return { { " ❯ ", "AosPrompt" }, { verb .. " ", "AosArg" }, { path .. "  ", "FloatTitle" }, { rev .. " ", "AosSha" } }
+end
+
 -- Each side titled with its own path, so a rename shows the old path on the old side.
-local function diff_title(i, rev, path, renamed)
-  if i == 1 then return { { " ❯ ", "AosPrompt" }, { "diff ", "AosArg" }, { path .. "  ", "FloatTitle" }, { rev .. " ", "AosSha" } } end
-  local t = { { " ↔ ", "AosDim" }, { rev .. " ", "AosSha" } }
-  if renamed then table.insert(t, 2, { path .. "  ", "FloatTitle" }) end
+local function diff_title(i, side, renamed)
+  if i == 1 then return title("diff", side.path, side.r7) end
+  local t = { { " ↔ ", "AosDim" }, { side.r7 .. " ", "AosSha" } }
+  if renamed then table.insert(t, 2, { side.path .. "  ", "FloatTitle" }) end
   return t
 end
 
--- Replaces the graph with old ↔ new floats in the same rectangle; q brings the graph back at its cursor.
-local function show_diff(c, f, old, new)
+-- Replaces the graph with floats in the same rectangle: old ↔ new diffed, or one plain pane; q brings the
+-- graph back at its cursor. sides: { title, text, name, path (nil: no filetype) }.
+local function show_panes(f, sides, diff)
   if not (S and vim.api.nvim_win_is_valid(S.win)) then return end
   close_diff()
-  local p7, s7 = c.parents[1] and c.parents[1]:sub(1, 7) or "root", c.sha:sub(1, 7)
-  local sides = { { p7, old, f.orig or f.path }, { s7, new, f.path } }
   local d = { diffopt = vim.o.diffopt, wins = {}, path = f.path }
-  S.diff, vim.o.diffopt = d, DIFFOPT
+  S.diff = d
+  if diff then vim.o.diffopt = DIFFOPT end
   vim.api.nvim_win_set_config(S.win, { hide = true })
-  for i, cfg in ipairs(panes(0.5)) do
-    local rev, text, path = unpack(sides[i])
-    cfg.style, cfg.title_pos, cfg.title = "minimal", "left", diff_title(i, rev, path, f.orig ~= nil)
-    local buf = scratch(("gitgraph://%s/%s"):format(rev, path), text, path)
-    d.wins[i] = vim.api.nvim_open_win(buf, i == 2, cfg)
-    vim.wo[d.wins[i]].number, vim.wo[d.wins[i]].cursorline = true, true
-    vim.api.nvim_win_call(d.wins[i], function() vim.cmd.diffthis() end)
+  for i, cfg in ipairs(panes(#sides == 2 and 0.5 or nil)) do
+    local side = sides[i]
+    cfg.style, cfg.title_pos, cfg.title = "minimal", "left", side.title
+    local buf = scratch(side.name, side.text)
+    d.wins[i] = vim.api.nvim_open_win(buf, i == #sides, cfg)
+    vim.wo[d.wins[i]].number, vim.wo[d.wins[i]].cursorline, vim.wo[d.wins[i]].foldmethod = true, true, "manual"
+    if diff then vim.api.nvim_win_call(d.wins[i], vim.cmd.diffthis) end
+    -- Set last: the global treesitter foldexpr would parse the whole buffer synchronously (2.5 s at 49k lines).
+    if side.path then vim.bo[buf].filetype = vim.filetype.match({ filename = side.path, buf = buf }) or "" end
     map_keys(buf, DIFF_KEYS)
     when_closed(d.wins[i], function() if S and S.diff == d then close_diff() end end)
   end
-  first_change(d.wins[2])
+  if diff then first_change(d.wins[2]) end
 end
 
+-- nvim's diff costs about 0.6 ms a hunk and grows with the file: past the bigfile limit or MAX_HUNKS the
+-- commit's patch shows instead.
+local function too_big(text)
+  return #text > BIG_BYTES or select(2, text:gsub("\n", "")) > BIG_LINES
+end
+
+local function show_patch(c, f)
+  local args = { "show", "--format=", "-U3", "-M", "--diff-merges=first-parent", c.sha, "--", f.path, f.orig }
+  job("diff patch", args, function(ok, out, err, slow)
+    if slow then return quiet("diff paused · slow repo") end
+    if not ok then return vim.notify("✗ git show\n" .. err, vim.log.levels.ERROR) end
+    local name = ("gitgraph://%s/%s.patch"):format(c.sha:sub(1, 7), f.path)
+    show_panes(f, { { title = title("patch", f.path, c.sha:sub(1, 7)), text = out, name = name, path = "x.diff" } })
+  end, { feature = "graph diff" })
+end
+
+-- An added or deleted file (or an empty side) shows the side that exists alone, like VS Code.
+local function show_sides(c, f, sides, hunks)
+  if #sides == 2 and (sides[1].text == "" or sides[2].text == "") then sides = { sides[sides[2].text == "" and 1 or 2] } end
+  if #sides == 2 and (hunks > MAX_HUNKS or too_big(sides[1].text) or too_big(sides[2].text)) then return show_patch(c, f) end
+  for i, x in ipairs(sides) do
+    x.name, x.title = ("gitgraph://%s/%s"):format(x.r7, x.path), diff_title(i, x, f.orig ~= nil)
+    if #sides == 1 then x.title, x.path = title(x.old and "deleted" or "added", x.path, x.r7), not too_big(x.text) and x.path or nil end
+  end
+  show_panes(f, sides, #sides == 2)
+end
+
+-- Both sides plus a -U0 patch whose hunk count is what nvim's diff would have to align.
 local function open_diff(c, f)
-  local texts, pending, slow = {}, 2, false
-  local function got(key)
-    return function(ok, out, _, timed_out)
-      texts[key], pending, slow = ok and out or "", pending - 1, slow or timed_out
+  local old = { rev = c.parents[1], r7 = c.parents[1] and c.parents[1]:sub(1, 7) or "root", path = f.orig or f.path, old = true }
+  local new = { rev = c.sha, r7 = c.sha:sub(1, 7), path = f.path }
+  local sides = (f.letter == "A" or not old.rev) and { new } or f.letter == "D" and { old } or { old, new }
+  local hunks = { args = { "show", "--format=", "-U0", "-M", "--diff-merges=first-parent", c.sha, "--", f.path, f.orig }, text = "" }
+  local reads = #sides == 2 and { old, new, hunks } or sides
+  local pending, slow = #reads, false
+  for _, key in ipairs({ "diff patch", "diff 1", "diff 2", "diff 3" }) do cancel(key) end
+  for i, r in ipairs(reads) do
+    job("diff " .. i, r.args or { "show", r.rev .. ":" .. r.path }, function(ok, out, _, timed_out)
+      r.text, pending, slow = ok and out or "", pending - 1, slow or timed_out
       if pending > 0 then return end
       if slow then return quiet("diff paused · slow repo") end
-      show_diff(c, f, texts.old, texts.new)
-    end
+      show_sides(c, f, sides, select(2, hunks.text:gsub("\n@@", "")))
+    end, { feature = "graph diff" })
   end
-  local opts = { feature = "graph diff" }
-  if c.parents[1] then job("diff old", { "show", c.parents[1] .. ":" .. (f.orig or f.path) }, got("old"), opts) else got("old")(true, "") end
-  job("diff new", { "show", c.sha .. ":" .. f.path }, got("new"), opts)
 end
 
 -- Actions --------------------------------------------------------------------------------------
@@ -740,6 +810,14 @@ local function yank(r)
   vim.notify("✓ yanked " .. r.c.sha:sub(1, 7))
 end
 
+-- The cursor's commit is looked for in the other walk's first load only; its row number there means nothing.
+local function toggle_walk()
+  S.all = not S.all
+  S.restore = anchor()
+  if S.restore then S.restore.started, S.restore.chase, S.restore.line = vim.uv.now(), false, 1 end
+  M.refresh()
+end
+
 local function clear_or_close()
   if S.filter == "" then return M.close() end
   S.filter = ""
@@ -749,7 +827,7 @@ end
 -- { lhs, fn, what it does, winbar hint? }; the winbar hints, g? and M.keys all come from this list.
 local GRAPH_KEYS = {
   { "/", set_filter, "filter commits by subject, author or sha", "/ filter" },
-  { "b", function() S.all = not S.all; M.refresh() end, "all branches, remotes and tags ↔ HEAD only", "b branches" },
+  { "b", toggle_walk, "all branches, remotes and tags ↔ HEAD only", "b branches" },
   { "<CR>", on_row(enter), "expand / collapse the commit's files · on a file: side-by-side diff", "⏎ files" },
   { "<Tab>", on_row(function(r) toggle(r.c) end), "expand / collapse the commit's files" },
   { "K", on_row(function(r) show(r.c) end), "commit details: message and stat", "K show" },
@@ -809,7 +887,7 @@ end
 local function reposition()
   if not S then return end
   vim.api.nvim_win_set_config(S.win, panes()[1])
-  for i, cfg in ipairs(S.diff and panes(0.5) or {}) do vim.api.nvim_win_set_config(S.diff.wins[i], cfg) end
+  for i, cfg in ipairs(S.diff and panes(#S.diff.wins == 2 and 0.5 or nil) or {}) do vim.api.nvim_win_set_config(S.diff.wins[i], cfg) end
   render()
 end
 

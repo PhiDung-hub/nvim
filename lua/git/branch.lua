@@ -31,6 +31,10 @@ function M.root()
   return name ~= "" and repo.root(name) or repo.root()
 end
 
+local function head(text, n)
+  return table.concat(vim.list_slice(vim.split(vim.trim(text), "\n", { plain = true }), 1, n), "\n")
+end
+
 local function fail(verb, err)
   vim.notify(("✗ git %s\n%s"):format(verb, vim.trim(err)), vim.log.levels.ERROR)
 end
@@ -72,45 +76,66 @@ function M.dirty(root, cb)
   repo.run({ "status", "--porcelain" }, root, function(ok, out) cb(ok and out ~= "") end, { feature = "checkout" })
 end
 
-local function unstash(root)
-  repo.run({ "stash", "pop", "--index" }, root, function(ok, _, err)
-    if not ok then fail("stash pop (your changes stay in the stash)", err) end
+-- Pops only the entry this checkout made (`sha`), never an older stash that is now stash@{0}.
+local function pop(root, sha, args, cb)
+  repo.run({ "rev-parse", "-q", "--verify", "stash@{0}" }, root, function(ok, out)
+    if not (ok and vim.trim(out) == sha) then return cb(false, "", "stash@{0} is no longer the checkout's stash " .. sha:sub(1, 7)) end
+    repo.run(vim.list_extend(args, { "stash@{0}" }), root, cb)
+  end, { feature = "checkout" })
+end
+
+-- Reports after the pop, since the error's hit-enter prompt would hold the pop back until a key is pressed.
+local function unstash(root, sha, why)
+  pop(root, sha, { "stash", "pop", "--index" }, function(ok, _, err)
+    fail("checkout", vim.trim(why) .. (ok and "\n○ your changes are back" or "\n✗ stash pop failed, your changes stay in the stash\n" .. vim.trim(err)))
     changed(root)
   end)
 end
 
-local function carry(root, msg, cb)
-  repo.run({ "stash", "pop" }, root, function(ok, _, err)
+local function carry(root, sha, msg, cb)
+  pop(root, sha, { "stash", "pop" }, function(ok, out, err)
     if ok then return done(root, msg .. " · changes carried over", cb) end
-    vim.notify(("! %s · carried changes conflict: resolve them, the stash is kept\n%s"):format(msg, vim.trim(err)), vim.log.levels.WARN)
+    vim.notify(("! %s · carried changes conflict: resolve them, the stash is kept\n%s"):format(msg, head(err .. out, 3)), vim.log.levels.WARN)
     changed(root)
   end)
 end
 
 -- Like VS Code's Stash & Checkout (`migrate` false) and Migrate Changes (true); a switch that still fails puts
 -- the stash back where it came from.
-local function stashed(root, t, msg, migrate, cb)
+local function stashed(root, t, msg, sha, migrate, cb)
   repo.run(switch_args(t), root, function(ok, _, err)
-    if not ok then
-      fail("checkout", err)
-      return unstash(root)
-    end
-    if migrate then return carry(root, msg, cb) end
+    if not ok then return unstash(root, sha, err) end
+    if migrate then return carry(root, sha, msg, cb) end
     done(root, msg .. " · changes stashed (git stash pop brings them back)", cb)
   end)
 end
 
-local function stash_switch(root, t, msg, migrate, cb)
-  repo.run({ "stash", "push", "--include-untracked", "-m", "before checkout " .. label(t) }, root, function(ok, _, err)
-    if not ok then return fail("stash", err) end
-    stashed(root, t, msg, migrate, cb)
+local function stash_top(root, cb)
+  repo.run({ "rev-parse", "-q", "--verify", "refs/stash" }, root, function(ok, out) cb(ok and vim.trim(out) or nil) end, { feature = "checkout" })
+end
+
+-- `stash push` exits 0 having saved nothing (e.g. only a submodule moved); then there is no entry to pop and
+-- the switch's own error stands.
+local function pushed(root, t, msg, why, before, migrate, cb)
+  stash_top(root, function(sha)
+    if not sha or sha == before then return fail("checkout · nothing to stash", why) end
+    stashed(root, t, msg, sha, migrate, cb)
+  end)
+end
+
+local function stash_switch(root, t, msg, why, migrate, cb)
+  stash_top(root, function(before)
+    repo.run({ "stash", "push", "--include-untracked", "-m", "before checkout " .. label(t) }, root, function(ok, _, err)
+      if not ok then return fail("stash", err) end
+      pushed(root, t, msg, why, before, migrate, cb)
+    end)
   end)
 end
 
 local function blocked(root, t, msg, err, cb)
-  local why = table.concat(vim.list_slice(vim.split(vim.trim(err), "\n", { plain = true }), 1, 8), "\n")
+  local why = head(err, 8)
   local choice = vim.fn.confirm(("Local changes block checking out %s\n%s"):format(label(t), why), "&Stash && checkout\nCarry &over changes\n&Cancel", 3)
-  if choice == 1 or choice == 2 then stash_switch(root, t, msg, choice == 2, cb) end
+  if choice == 1 or choice == 2 then stash_switch(root, t, msg, err, choice == 2, cb) end
 end
 
 local function switch(root, t, cb)
