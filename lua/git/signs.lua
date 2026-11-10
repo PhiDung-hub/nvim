@@ -12,43 +12,65 @@ local indices = { result_type = "indices", algorithm = "histogram" }
 
 local function say(msg, hl) api.nvim_echo({ { msg, hl or "AosDim" } }, false, {}) end
 
--- Text as { lines, eol }, so a missing final newline survives a round trip through the index.
+-- Index text as { lines, eol, cr }: a missing final newline and CRLF endings survive a round trip.
 local function split(text)
   local lines = vim.split(text, "\n", { plain = true })
   local eol = lines[#lines] == ""
   if eol then lines[#lines] = nil end
-  return { lines = lines, eol = eol }
+  local cr = #lines > 0
+  for _, l in ipairs(lines) do
+    if l:sub(-1) ~= "\r" then cr = false break end
+  end
+  if cr then lines = vim.tbl_map(function(l) return l:sub(1, -2) end, lines) end
+  return { lines = lines, eol = eol, cr = cr }
 end
 
-local function join(t) return #t.lines == 0 and "" or table.concat(t.lines, "\n") .. (t.eol and "\n" or "") end
+-- Diff input: always newline-terminated, so a missing final newline never makes a hunk of its own.
+local function join(t) return #t.lines == 0 and "" or table.concat(t.lines, "\n") .. "\n" end
 
-local function buf_text(buf)
+-- `cr`: the index copy's line endings, which lines added from the buffer take on.
+local function buf_text(buf, cr)
   local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
   if #lines == 1 and lines[1] == "" then lines = {} end
-  return { lines = lines, eol = vim.bo[buf].eol or vim.bo[buf].fixeol }
+  return { lines = lines, eol = vim.bo[buf].eol or vim.bo[buf].fixeol, cr = cr }
 end
 
 local function slice(lines, start, count) return count > 0 and vim.list_slice(lines, start, start + count - 1) or {} end
 
-local function side(out, sign, lines, noeol)
-  for _, l in ipairs(lines) do out[#out + 1] = sign .. l end
+local function side(out, sign, lines, cr, noeol)
+  for _, l in ipairs(lines) do out[#out + 1] = sign .. l .. (cr and "\r" or "") end
   if noeol and #lines > 0 then out[#out + 1] = "\\ No newline at end of file" end
 end
 
 -- One zero-context hunk; c = { old_start, old_count, new_start, new_count }, where a count of 0 means "after start".
 -- The + start is where the lines land after the earlier hunks of this patch only (delta), not in `new`.
+-- Appending after an old last line that lacks its newline rewrites that line, so git adds the newline.
 local function hunk_lines(out, c, old, new, delta)
-  local pos = (c[2] > 0 and c[1] - 1 or c[1]) + delta
-  local at_end = (c[2] > 0 and c[1] + c[2] - 1 or c[1]) >= #old.lines
-  out[#out + 1] = ("@@ -%d,%d +%d,%d @@"):format(c[1], c[2], c[4] > 0 and pos + 1 or pos, c[4])
-  side(out, "-", slice(old.lines, c[1], c[2]), at_end and not old.eol)
-  side(out, "+", slice(new.lines, c[3], c[4]), at_end and c[3] + c[4] - 1 >= #new.lines and not new.eol)
+  local olds, news = slice(old.lines, c[1], c[2]), slice(new.lines, c[3], c[4])
+  if c[2] == 0 and c[1] > 0 and c[1] == #old.lines and not old.eol then
+    olds = { old.lines[c[1]] }
+    news = vim.list_extend({ olds[1] }, news)
+  end
+  local pos = (#olds > 0 and c[1] - 1 or c[1]) + delta
+  local at_end = (#olds > 0 and c[1] + #olds - 1 or c[1]) >= #old.lines
+  out[#out + 1] = ("@@ -%d,%d +%d,%d @@"):format(c[1], #olds, #news > 0 and pos + 1 or pos, #news)
+  side(out, "-", olds, old.cr, at_end and not old.eol)
+  side(out, "+", news, new.cr, at_end and c[3] + c[4] - 1 >= #new.lines and not new.eol)
+end
+
+local quotes = { ["\\"] = "\\\\", ['"'] = '\\"', ["\t"] = "\\t", ["\n"] = "\\n" }
+
+-- Git's C-quoting; unquoted, git apply reads whatever follows a tab as a timestamp.
+local function quote(path)
+  if not path:find('[\t\n"\\]') then return path end
+  return '"' .. path:gsub('[\\"\t\n]', quotes) .. '"'
 end
 
 -- Minimal unified patch turning `old` into `old` + only `changes` (for git apply --unidiff-zero).
 local function patch(rel, old, new, changes)
   table.sort(changes, function(a, b) return a[1] < b[1] end)
-  local out, delta = { ("diff --git a/%s b/%s"):format(rel, rel), "--- a/" .. rel, "+++ b/" .. rel }, 0
+  local a, b = quote("a/" .. rel), quote("b/" .. rel)
+  local out, delta = { ("diff --git %s %s"):format(a, b), "--- " .. a, "+++ " .. b }, 0
   for _, c in ipairs(changes) do
     hunk_lines(out, c, old, new, delta)
     delta = delta + c[4] - c[2]
@@ -113,35 +135,47 @@ local function on_git_change(root)
   end
 end
 
-local function watch(loc)
-  if watchers[loc.gitdir] then return end
-  local w, timer = assert(vim.uv.new_fs_event()), assert(vim.uv.new_timer())
-  watchers[loc.gitdir] = w
-  w:start(loc.gitdir, {}, function(err, name)
+local change_timers = {}
+
+local function watch(path, root)
+  if watchers[path] then return end
+  change_timers[root] = change_timers[root] or assert(vim.uv.new_timer())
+  local w, timer = assert(vim.uv.new_fs_event()), change_timers[root]
+  local ok = w:start(path, {}, function(err, name)
     if err or (name and name:match("%.lock$")) then return end
-    timer:start(120, 0, vim.schedule_wrap(function() on_git_change(loc.root) end))
+    timer:start(120, 0, vim.schedule_wrap(function() on_git_change(root) end))
   end)
+  if not ok then return w:close() end
+  watchers[path] = w
+end
+
+-- A push from a shell only rewrites refs/remotes/<upstream>, below the (non-recursive) gitdir watch.
+local function watch_upstream(loc, upstream)
+  local dir = vim.fs.dirname(loc.common .. "/refs/remotes/" .. upstream)
+  while #dir > #loc.common and not vim.uv.fs_stat(dir) do dir = vim.fs.dirname(dir) end
+  watch(dir, loc.root)
 end
 
 local function resolved(dir, ok, out)
-  local root, gitdir = unpack(vim.split(vim.trim(out), "\n"))
-  dirs[dir] = ok and root and gitdir and { root = root, gitdir = gitdir } or false
-  if dirs[dir] then watch(dirs[dir]) end
+  local root, gitdir, common = unpack(vim.split(vim.trim(out), "\n"))
+  dirs[dir] = ok and common and { root = root, gitdir = gitdir, common = common } or false
+  if dirs[dir] then watch(gitdir, root) end
   for _, cb in ipairs(waiting[dir]) do cb(dirs[dir] or nil) end
   waiting[dir] = nil
 end
 
--- Async, cached repo lookup for a directory: cb({ root, gitdir } | nil).
+-- Async, cached repo lookup for a directory: cb({ root, gitdir, common } | nil).
 local function locate(dir, cb)
   if dirs[dir] ~= nil then return cb(dirs[dir] or nil) end
   if waiting[dir] then return table.insert(waiting[dir], cb) end
   waiting[dir] = { cb }
-  repo.run({ "rev-parse", "--show-toplevel", "--absolute-git-dir" }, dir, function(ok, out) resolved(dir, ok, out) end)
+  local args = { "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir" }
+  repo.run(args, dir, function(ok, out) resolved(dir, ok, out) end)
 end
 
 local function track(buf, loc, file, cb)
   local rel = repo.relative(loc.root, file)
-  repo.show(loc.root, "", rel, function(text)
+  repo.show_raw(loc.root, "", rel, function(text)
     if not api.nvim_buf_is_valid(buf) then return end
     bufs[buf] = { buf = buf, root = loc.root, rel = rel, index = text and split(text), hunks = {} }
     update(buf)
@@ -165,6 +199,7 @@ end
 refresh_status = function(loc)
   repo.status(loc.root, function(s)
     stats[loc.root] = s or false
+    if s and s.upstream then watch_upstream(loc, s.upstream) end
     vim.cmd.redrawtabline()
   end)
 end
@@ -231,42 +266,58 @@ function M.select()
 end
 
 -- Hunks under the cursor, or every part of a hunk inside l1..l2 (Stage/Revert Selected Ranges).
-local function targets(st, l1, l2)
-  if not l1 then
-    local h = hunk_at(st.hunks, vim.fn.line("."))
-    return { h }
-  end
+local function targets(st, l1, l2, lnum)
+  if not l1 then return { (hunk_at(st.hunks, lnum)) } end
   local out = {}
   for _, h in ipairs(st.hunks) do out[#out + 1] = intersect(h, l1, l2) end
   return out
 end
 
--- git apply refuses (instead of clobbering) when the index moved since the last reload.
+-- Zero-context hunks can't tell that the index moved (pure additions have no '-' lines to check),
+-- so stage and unstage run one at a time per buffer, each building its patch from a fresh index read.
+local busy = {}
+
+local function exclusive(buf, fn)
+  if busy[buf] then return say("◆ still applying the last change") end
+  busy[buf] = true
+  M.reload(buf, function() fn(bufs[buf]) end)
+end
+
+local function free(buf, msg)
+  busy[buf] = nil
+  say(msg)
+end
+
 local function apply(st, text, args, cb)
   local cmd = vim.list_extend({ "apply", "--cached", "--unidiff-zero", "--whitespace=nowarn" }, args)
   repo.run(cmd, st.root, function(ok, _, err)
+    busy[st.buf] = nil
     if ok then return cb() end
     say("✗ " .. vim.trim(err), "AosFailed")
     M.reload(st.buf)
   end, { stdin = text })
 end
 
-function M.stage(l1, l2, cb)
-  local st, buf = current()
-  if not st then return end
-  if not st.index then return say("○ not in the index: <leader>hS stages the file") end
-  local changes = targets(st, l1, l2)
-  if #changes == 0 then return say("○ no hunk here") end
-  apply(st, patch(st.rel, st.index, buf_text(buf), changes), {}, function()
+local function stage_now(st, buf, l1, l2, lnum, cb)
+  if not st.index then return free(buf, "○ not in the index: <leader>hS stages the file") end
+  local changes = targets(st, l1, l2, lnum)
+  if #changes == 0 then return free(buf, "○ no hunk here") end
+  apply(st, patch(st.rel, st.index, buf_text(buf, st.index.cr), changes), {}, function()
     say(("✓ staged %d %s"):format(#changes, #changes == 1 and "hunk" or "hunks"), "AosDone")
     M.reload(buf, cb)
   end)
 end
 
+function M.stage(l1, l2, cb)
+  local st, buf = current()
+  local lnum = vim.fn.line(".")
+  if st then exclusive(buf, function(fresh) stage_now(fresh, buf, l1, l2, lnum, cb) end) end
+end
+
 function M.revert(l1, l2)
   local st, buf = current()
   if not st or not st.index then return end
-  local changes = targets(st, l1, l2)
+  local changes = targets(st, l1, l2, vim.fn.line("."))
   table.sort(changes, function(a, b) return a[3] > b[3] end)
   -- Re-setting undolevels closes the undo block, so the revert is its own undo step.
   vim.bo[buf].undolevels = vim.bo[buf].undolevels
@@ -301,8 +352,9 @@ local function to_index(hunks, lnum)
   return lnum + delta
 end
 
-local function unstage_from(st, buf, head)
+local function unstage_from(st, buf, head, lnum)
   local done = function(ok, _, err)
+    busy[buf] = nil
     if ok == false then return say("✗ " .. vim.trim(err), "AosFailed") end
     say("✓ unstaged hunk", "AosDone")
     M.reload(buf)
@@ -310,15 +362,37 @@ local function unstage_from(st, buf, head)
   if not head then return repo.run({ "rm", "--cached", "-q", "--", st.rel }, st.root, done) end
   local base = split(head)
   local staged = vim.text.diff(join(base), join(st.index), indices) --[[@as integer[][] ]]
-  if #staged == 0 then return say("○ nothing staged in " .. st.rel) end
-  local h = hunk_at(staged, to_index(st.hunks, vim.fn.line("."))) or staged[#staged]
+  if #staged == 0 then return free(buf, "○ nothing staged in " .. st.rel) end
+  local h = hunk_at(staged, to_index(st.hunks, lnum)) or staged[#staged]
   apply(st, patch(st.rel, base, st.index, { h }), { "--reverse" }, done)
+end
+
+local function staged_orig(s, rel)
+  for _, e in ipairs(s and s.staged or {}) do
+    if e.path == rel and e.orig then return e.orig end
+  end
+end
+
+-- HEAD's copy of the file, following a staged rename; nil for a file that is new in the index.
+local function head_text(st, cb)
+  repo.show_raw(st.root, "HEAD", st.rel, function(text)
+    if text then return cb(text) end
+    repo.status(st.root, function(s)
+      local orig = staged_orig(s, st.rel)
+      if not orig then return cb(nil) end
+      repo.show_raw(st.root, "HEAD", orig, cb)
+    end)
+  end)
 end
 
 function M.unstage()
   local st, buf = current()
-  if not st or not st.index then return end
-  repo.show(st.root, "HEAD", st.rel, function(head) unstage_from(st, buf, head) end)
+  local lnum = vim.fn.line(".")
+  if not st then return end
+  exclusive(buf, function(fresh)
+    if not fresh.index then return free(buf, "○ nothing staged in " .. fresh.rel) end
+    head_text(fresh, function(head) unstage_from(fresh, buf, head, lnum) end)
+  end)
 end
 
 -- Peek: the hunk's old and new lines in a float under it, with its own stage/revert/move keys --
@@ -426,6 +500,12 @@ local function ago(t)
   return "just now"
 end
 
+-- The buffer as blame --contents input, in the index copy's line endings (else CRLF files blame as uncommitted).
+local function contents(buf)
+  local lines, nl = buf_text(buf).lines, bufs[buf].index and bufs[buf].index.cr and "\r\n" or "\n"
+  return #lines == 0 and "" or table.concat(lines, nl) .. nl
+end
+
 local function blame_args(st, extra)
   return vim.list_extend(vim.list_extend({ "blame", "--porcelain" }, extra), { "--contents", "-", "--", st.rel })
 end
@@ -448,7 +528,7 @@ local function line_blame()
   blame.job = repo.run(blame_args(st, { "-L", lnum .. "," .. lnum }), st.root, function(ok, out)
     if seq ~= blame.seq then return end
     show_line_blame(buf, lnum, ok and parse_blame(out)[lnum] or { sha = zero })
-  end, { stdin = join(buf_text(buf)) })
+  end, { stdin = contents(buf) })
 end
 
 local function clear_line_blame(ev)
@@ -511,7 +591,7 @@ local function rerun_split()
     if split_state ~= s or not api.nvim_buf_is_valid(s.buf) then return end
     render_split(parse_blame(out), api.nvim_buf_line_count(s.src))
     api.nvim_win_call(s.swin, function() vim.cmd("syncbind") end)
-  end, { stdin = join(buf_text(s.src)) })
+  end, { stdin = contents(s.src) })
 end
 
 local function show_commit()
@@ -539,8 +619,11 @@ local function close_split()
   split_state = nil
   if not s then return end
   if api.nvim_win_is_valid(s.swin) then vim.wo[s.swin].scrollbind, vim.wo[s.swin].cursorbind = false, false end
-  if api.nvim_win_is_valid(s.win) then api.nvim_win_close(s.win, true) end
   pcall(api.nvim_del_augroup_by_name, "GitBlameSplit")
+  if not api.nvim_win_is_valid(s.win) then return end
+  -- The source window was closed with :q and the blame column is all that is left.
+  if #api.nvim_list_tabpages() == 1 and #api.nvim_tabpage_list_wins(0) == 1 then return vim.cmd("silent! quit") end
+  api.nvim_win_close(s.win, true)
 end
 
 local function open_split(src, swin)
@@ -556,7 +639,10 @@ local function open_split(src, swin)
   vim.keymap.set("n", "q", close_split, { buffer = bbuf, nowait = true })
   vim.keymap.set("n", "<CR>", show_commit, { buffer = bbuf, nowait = true })
   local group = api.nvim_create_augroup("GitBlameSplit", {})
-  api.nvim_create_autocmd("WinClosed", { group = group, pattern = tostring(bwin), callback = vim.schedule_wrap(close_split) })
+  api.nvim_create_autocmd("WinClosed", { group = group, pattern = { tostring(bwin), tostring(swin) }, callback = vim.schedule_wrap(close_split) })
+  api.nvim_create_autocmd("BufWinEnter", { group = group, callback = function(ev)
+    if api.nvim_get_current_win() == swin and ev.buf ~= src then vim.schedule(close_split) end
+  end })
   api.nvim_create_autocmd({ "BufWritePost", "TextChanged", "InsertLeave" }, { group = group, buffer = src, callback = rerun_split })
 end
 
