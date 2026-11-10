@@ -133,7 +133,7 @@ function M.render()
   local ai = require("core.complete").segment()
   if ai then right[#right + 1] = segment(ai.hl, ai.text) end
   for _, seg in ipairs(require("agent").segments()) do right[#right + 1] = segment(seg.hl, seg.text) end
-  local branch = require("core.git").branch()
+  local branch = require("core.git").status_text()
   if branch then right[#right + 1] = segment("AosSegBlue", branch) end
   right[#right + 1] = segment("AosSegMagenta", ("%dL %d%%"):format(vim.fn.line("$"), math.floor(vim.fn.line(".") * 100 / vim.fn.line("$"))))
   local status = table.concat(right)

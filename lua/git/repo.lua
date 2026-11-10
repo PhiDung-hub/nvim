@@ -79,4 +79,10 @@ function M.show(root, rev, path, cb)
   M.run({ "show", rev .. ":" .. path }, root, function(ok, out) cb(ok and out or nil) end)
 end
 
+-- M.show without text mode, so CRLF line endings come back exactly as stored. cb(bytes|nil).
+function M.show_raw(root, rev, path, cb)
+  local cmd = { "git", "-C", root, "--no-pager", "show", rev .. ":" .. path }
+  vim.system(cmd, {}, function(r) vim.schedule(function() cb(r.code == 0 and (r.stdout or "") or nil) end) end)
+end
+
 return M

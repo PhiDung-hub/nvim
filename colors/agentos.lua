@@ -184,6 +184,13 @@ local hl = {
   GitAdd = { fg = t.green },
   GitChange = { fg = t.yellow },
   GitDelete = { fg = t.red },
+  -- git.signs: peek deleted-line band, blame heat from newest (0) to oldest (4)
+  GitDeleteLine = { bg = blend(t.red, 0.12) },
+  GitBlameAge0 = { fg = t.magenta },
+  GitBlameAge1 = { fg = blend(t.magenta, 0.8) },
+  GitBlameAge2 = { fg = blend(t.magenta, 0.62) },
+  GitBlameAge3 = { fg = blend(t.magenta, 0.46) },
+  GitBlameAge4 = { fg = blend(t.magenta, 0.32) },
 
   NeoTreeNormal = { fg = t.text },
   NeoTreeNormalNC = { fg = t.text },
