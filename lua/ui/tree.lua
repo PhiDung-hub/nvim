@@ -2,13 +2,13 @@ local M = {}
 local uv, api = vim.uv, vim.api
 local repo, icons = require("git.repo"), require("ui.icons")
 local ns = api.nvim_create_namespace("ui.tree")
-local LIMIT, BUDGET = 2000, 3000
+local LIMIT, BUDGET, GIT_DELAY = 2000, 3000, 300
 local S = { nodes = {}, rows = {}, lines = {}, index = {}, watchers = {}, gitpaths = {}, width = 32, epoch = 0 }
 local git, diagnostics, modified = {}, {}, {}
 local render, scan, watch, refresh_git
 local LETTER = { M = "AosRunning", T = "AosRunning", A = "AosDone", U = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", ["!"] = "AosFailed" }
 
-local function visible() return S.win and api.nvim_win_is_valid(S.win) end
+local function visible() return S.win and api.nvim_win_is_valid(S.win) and api.nvim_win_get_buf(S.win) == S.buf end
 local function notify(text) vim.notify("○ tree · " .. text, vim.log.levels.WARN) end
 local function display(text) return (text:gsub("%c", "?")) end
 local function join(dir, name) return (dir == "/" and "" or dir) .. "/" .. name end
@@ -24,8 +24,14 @@ local function cache() return S.gitroot and git[S.gitroot] end
 local function debounce(key, ms, fn)
   local epoch = S.epoch
   stop(S[key])
-  S[key] = uv.new_timer()
-  S[key]:start(ms, 0, later(function() stop(S[key]) S[key] = nil if epoch == S.epoch and visible() then fn() end end))
+  local timer = uv.new_timer()
+  S[key] = timer
+  timer:start(ms, 0, later(function()
+    stop(timer)
+    if S[key] ~= timer then return end
+    S[key] = nil
+    if epoch == S.epoch and visible() then fn() end
+  end))
 end
 
 local function hidden(node)
@@ -86,9 +92,17 @@ local function apply(rows, lines, index)
     api.nvim_buf_set_lines(S.buf, first - 1, #old - tail, false, vim.list_slice(lines, first, #lines - tail))
     vim.bo[S.buf].modifiable = false
   end
-  if S.select and index[S.select] then cursor(S.select) S.select = nil
+  if S.first then
+    local first_match = 1
+    for i, row in ipairs(rows) do if row.node and not row.header then first_match = i break end end
+    api.nvim_win_set_cursor(S.win, { first_match, 0 })
+    S.first = nil
+  elseif S.select and index[S.select] then cursor(S.select) S.select = nil
   elseif at then cursor(at.path) end
-  vim.cmd.redraw()
+  -- Ephemeral badges need invalidation even when the buffer text is unchanged.
+  if S.repaint then api.nvim__redraw({ buf = S.buf, valid = false, flush = true })
+  else vim.cmd.redraw() end
+  S.repaint = nil
 end
 
 local function push(stack, node, prefix)
@@ -102,8 +116,9 @@ local function build(version)
   local rows, lines, index, stack = {}, {}, {}, {}
   local deadline = uv.hrtime() + BUDGET * 1000000
   local root = S.nodes[S.root]
-  local title = " ❯ " .. display(S.root) .. (S.query and " /" .. S.query or "") .. " "
+  local title = " ❯ " .. display(S.root) .. " "
   rows[1], lines[1], index[S.root] = { node = root, header = true }, title, 1
+  if S.query then rows[2], lines[2] = {}, " filter: " .. display(S.query) .. " · Esc clears " end
   if root.expanded then push(stack, root, " ") end
   local function batch()
     if not visible() or version ~= S.version then return end
@@ -135,7 +150,8 @@ local function build(version)
   batch()
 end
 
-render = function()
+render = function(repaint)
+  S.repaint = S.repaint or repaint
   S.version = (S.version or 0) + 1
   local version = S.version
   vim.schedule(function() if version == S.version then build(version) end end)
@@ -304,8 +320,8 @@ refresh_git = function()
     if not visible() or cache() ~= g then return end
     g.notice = g.status_notice or g.ignore_notice
     prune()
-    render()
-    if g.again then debounce("git_timer", 150, refresh_git) end
+    render(true)
+    if g.again then debounce("git_timer", GIT_DELAY, refresh_git) end
   end
   repo.status(g.root, function(status, err)
     g.status_notice = nil
@@ -342,6 +358,7 @@ watch = function(path, gitdir)
     if not gitdir then S.dirty[path] = true end
     vim.schedule(function()
       if epoch ~= S.epoch or not visible() then return end
+      debounce("git_timer", GIT_DELAY, refresh_git)
       debounce("watch_timer", 150, function()
         local dirty = S.dirty or {}
         S.dirty = {}
@@ -349,7 +366,6 @@ watch = function(path, gitdir)
           local node = S.nodes[dir]
           if node and node.expanded then scan(node) end
         end
-        debounce("git_timer", 10, refresh_git)
       end)
     end)
   end)
@@ -386,7 +402,7 @@ function M.refresh(done)
       if pending == 0 and done then vim.schedule(done) end
     end)
   end
-  debounce("git_timer", 150, refresh_git)
+  debounce("git_timer", GIT_DELAY, refresh_git)
 end
 
 local function collapse(node)
@@ -451,7 +467,8 @@ local function open_file(mode)
     return
   end
   if node.deleted then return notify("file was deleted") end
-  local tree, win = S.win, destination()
+  local tree = S.win
+  local win = S.inplace and not mode and tree or destination()
   api.nvim_set_current_win(win)
   local cmd = ({ s = "vsplit", S = "split", t = "tabedit" })[mode] or "edit"
   local ok, err = pcall(vim.cmd, cmd .. " " .. vim.fn.fnameescape(node.path))
@@ -650,16 +667,20 @@ local function yank(absolute)
 end
 
 local function filter()
+  S.reveal, S.select = (S.reveal or 0) + 1, nil
   local group = api.nvim_create_augroup("UiTreeFilter", {})
   api.nvim_create_autocmd("CmdlineChanged", { group = group, callback = function()
     local query = vim.fn.getcmdline()
     S.query = query ~= "" and query:lower() or nil
+    S.first = true
     render()
     vim.cmd.redraw()
   end })
   local ok, query = pcall(vim.fn.input, { prompt = "/", default = S.query or "", cancelreturn = "" })
   api.nvim_del_augroup_by_id(group)
   S.query = ok and query ~= "" and query:lower() or nil
+  S.first = true
+  if visible() then api.nvim_set_current_win(S.win) end
   render()
 end
 
@@ -691,7 +712,7 @@ M.keys = { { section = "File tree", keys = {
   end },
   { ".", "root at directory", run = function() local node = node_at() if node and node.dir then M.open(node.path, S.float) end end },
   { "-", "root up", run = function() M.open(vim.fs.dirname(S.root), S.float) end },
-  { "/", "filter loaded names", run = filter },
+  { "/", "filter loaded names (Enter selects first, Esc clears)", run = filter },
   { "g?", "help", run = function() require("ui.keys").open("Popups", "File tree") end },
   { "q", "close", run = function() M.close() end },
   { "<Esc>", "clear filter / close", run = function() if S.query then S.query = nil render() else M.close() end end },
@@ -699,6 +720,9 @@ M.keys = { { section = "File tree", keys = {
 
 local function win_opts()
   local wo = vim.wo[S.win]
+  S.options = {}
+  for _, name in ipairs({ "number", "relativenumber", "signcolumn", "foldcolumn", "statuscolumn", "list", "wrap", "spell",
+    "colorcolumn", "winbar", "cursorline", "foldenable", "winfixwidth", "winhighlight" }) do S.options[name] = wo[name] end
   wo.number, wo.relativenumber, wo.signcolumn, wo.foldcolumn, wo.statuscolumn = false, false, "no", "0", ""
   wo.list, wo.wrap, wo.spell, wo.colorcolumn, wo.winbar = false, false, false, "", ""
   wo.cursorline, wo.foldenable, wo.winfixwidth = true, false, not S.float
@@ -713,16 +737,25 @@ local function normal_windows(win)
   return count
 end
 
-function M.close()
-  if visible() and not S.float and normal_windows(S.win) > 1 then S.width = api.nvim_win_get_width(S.win) end
+local function detach()
+  local win = S.win
+  S.win = nil
+  if win and api.nvim_win_is_valid(win) then
+    for name, value in pairs(S.options or {}) do vim.wo[win][name] = value end
+  end
+  S.options, S.select, S.first, S.repaint = nil, nil, nil, nil
   S.epoch = S.epoch + 1
   S.version = (S.version or 0) + 1
   for _, node in pairs(S.nodes) do if node.cancel then node.cancel() end end
   for path in pairs(S.watchers) do unwatch(path) end
   stop(S.watch_timer) stop(S.git_timer)
   S.watch_timer, S.git_timer = nil, nil
-  local win = S.win
-  S.win = nil
+end
+
+function M.close()
+  local win = visible() and S.win or nil
+  if win and not S.float and not S.inplace and normal_windows(win) > 1 then S.width = api.nvim_win_get_width(win) end
+  detach()
   if not win or not api.nvim_win_is_valid(win) then return end
   if not S.float and normal_windows(win) == 1 then api.nvim_win_set_buf(win, api.nvim_create_buf(true, false))
   else api.nvim_win_close(win, true) end
@@ -737,6 +770,7 @@ function M.open(root, float, inplace)
     S.nodes, S.root, S.gitroot, S.query, S.notice, S.target = {}, root, nil, nil, nil, nil
   end
   S.float, S.origin, S.lines, S.rows, S.index = float == true, origin, { "" }, {}, {}
+  S.inplace = inplace == true
   S.buf = api.nvim_create_buf(false, true)
   vim.bo[S.buf].filetype, vim.bo[S.buf].bufhidden, vim.bo[S.buf].buftype = "aostree", "wipe", "nofile"
   vim.bo[S.buf].swapfile, vim.b[S.buf].completion = false, false
@@ -801,6 +835,7 @@ function M.setup()
       uv.fs_stat(path, later(function(_, stat)
         if not api.nvim_buf_is_valid(ev.buf) or api.nvim_get_current_buf() ~= ev.buf then return end
         if stat and stat.type == "directory" then
+          vim.bo[ev.buf].buflisted, vim.bo[ev.buf].bufhidden = false, "wipe"
           vim.cmd.cd(vim.fn.fnameescape(path))
           M.open(path, false, true)
           return
@@ -809,9 +844,10 @@ function M.setup()
         if visible() then S.origin = api.nvim_get_current_win() M.reveal(path) end
       end))
     end
-    if ev.event == "BufWritePost" and visible() then debounce("git_timer", 150, refresh_git) end
+    if ev.event == "BufWritePost" and visible() then debounce("git_timer", GIT_DELAY, refresh_git) end
   end })
   api.nvim_create_autocmd("BufWipeout", { group = group, callback = function(ev)
+    if ev.buf == S.buf and S.win then detach() end
     local path = api.nvim_buf_get_name(ev.buf)
     diagnostics[path], modified[path] = nil, nil
   end })
