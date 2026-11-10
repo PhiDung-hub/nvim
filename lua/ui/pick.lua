@@ -1,6 +1,7 @@
 -- Minimal fuzzy picker in the Agent OS row grammar: `glyph · id · text`, prompt `❯ query`.
 -- Item: { text = string, id? = string, glyph? = string, hl? = group, data? = any }.
--- `opts.preview` adds a right pane showing `data.filename`/`data.bufnr` at `data.lnum`.
+-- `opts.preview` adds a right pane showing `data.filename`/`data.bufnr` at `data.lnum`,
+-- or, as a function(win, item), whatever it draws into that pane.
 local M = {}
 local ns = vim.api.nvim_create_namespace("ui.pick")
 local pns = vim.api.nvim_create_namespace("ui.pick.preview")
@@ -63,6 +64,7 @@ function M.open(opts)
   local pbuf, lbuf = vim.api.nvim_create_buf(false, true), vim.api.nvim_create_buf(false, true)
   vim.b[pbuf].completion = false -- blink.cmp's buffer keymaps would shadow <CR>/<Down>/<Up>
   local vwin, vstate
+  local show = type(opts.preview) == "function" and opts.preview or function(w, item) preview(w, item, vstate) end
   if opts.preview then
     vstate = {}
     vwin = vim.api.nvim_open_win(vim.api.nvim_create_buf(false, true), false, {
@@ -93,7 +95,7 @@ function M.open(opts)
     index = math.max(1, math.min(index, #shown))
     if #shown > 0 then vim.api.nvim_win_set_cursor(lwin, { index, 0 }) end
     vim.api.nvim_win_set_config(lwin, { footer = (" %d/%d "):format(#shown, #items), footer_pos = "right" })
-    if vwin then preview(vwin, shown[index], vstate) end
+    if vwin then show(vwin, shown[index]) end
   end
 
   local last_query = ""
@@ -129,7 +131,7 @@ function M.open(opts)
     return function()
       index = (index - 1 + delta) % math.max(#shown, 1) + 1
       if #shown > 0 then vim.api.nvim_win_set_cursor(lwin, { index, 0 }) end
-      if vwin then preview(vwin, shown[index], vstate) end
+      if vwin then show(vwin, shown[index]) end
     end
   end
 

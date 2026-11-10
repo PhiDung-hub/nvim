@@ -14,7 +14,7 @@ local INSTRUCTIONS = "You are a code completion engine. Output ONLY the code tha
   .. "If nothing fits, output nothing."
 
 M.mode = "auto"
-local shown, timers, codex = nil, {}, { pending = {}, threads = {}, id = 0, inflight = nil, down_until = 0 }
+local shown, timers, codex = nil, {}, { pending = {}, threads = {}, id = 0, inflight = nil, down_until = 0, queue = {}, asks = {} }
 local llm = { port = 18080, job = nil, req = nil }
 
 -- Rendering ---------------------------------------------------------------------------------
@@ -165,8 +165,20 @@ local function rpc(method, params, cb)
   vim.fn.chansend(codex.job, vim.json.encode({ jsonrpc = "2.0", id = codex.id, method = method, params = params }) .. "\n")
 end
 
+-- A one-off M.ask turn: collect its reply, or its error.
+local function on_ask(ask, msg)
+  local p = msg.params or {}
+  if msg.method == "item/completed" and p.item and p.item.type == "agentMessage" then ask.text = p.item.text or "" end
+  if msg.method == "error" then ask.err = p.error and p.error.message or vim.inspect(p) end
+  if msg.method ~= "turn/completed" then return end
+  codex.asks[p.threadId] = nil
+  pcall(rpc, "thread/unsubscribe", { threadId = p.threadId }, function() end)
+  ask.cb(ask.err or (ask.text == nil and "codex sent no reply" or nil), ask.text)
+end
+
 local function on_notification(msg)
   local p = msg.params or {}
+  if codex.asks[p.threadId] then return on_ask(codex.asks[p.threadId], msg) end
   local turn = codex.inflight
   if msg.method == "error" and turn and p.threadId == turn.thread then
     codex.down_until = vim.uv.now() + CODEX_BACKOFF
@@ -226,7 +238,11 @@ local function codex_start()
         if line ~= "" then on_line(line) end
       end
     end,
-    on_exit = function() codex.job, codex.threads, codex.inflight = nil, {}, nil end,
+    on_exit = function()
+      for _, ask in pairs(codex.asks) do ask.cb("codex app-server exited") end
+      for _, go in ipairs(codex.queue) do go("codex app-server exited") end
+      codex.job, codex.threads, codex.inflight, codex.ready, codex.asks, codex.queue = nil, {}, nil, false, {}, {}
+    end,
   })
   if codex.job <= 0 then
     codex.job = nil
@@ -235,6 +251,9 @@ local function codex_start()
   rpc("initialize", { clientInfo = { name = "nvim-complete", version = "0.1" } }, function(err)
     if err then return end
     vim.fn.chansend(codex.job, vim.json.encode({ jsonrpc = "2.0", method = "initialized" }) .. "\n")
+    codex.ready = true
+    for _, go in ipairs(codex.queue) do go() end
+    codex.queue = {}
     warm_thread()
   end)
 end
@@ -274,6 +293,60 @@ function M.codex_request(ctx)
     turn.id = res and res.turn and res.turn.id
   end)
   warm_thread()
+end
+
+local function ask_turn(state, text, cb)
+  codex.asks[state.thread] = { cb = cb }
+  rpc("turn/start", { threadId = state.thread, input = { { type = "text", text = text } }, effort = EFFORT }, function(err, res)
+    if not err then
+      state.turn = res and res.turn and res.turn.id
+      return
+    end
+    codex.asks[state.thread] = nil
+    cb(err.message or "turn/start failed")
+  end)
+end
+
+local function ask_thread(state, instructions, text, cb)
+  local params = {
+    model = model(), ephemeral = true, baseInstructions = instructions, sandbox = "read-only", approvalPolicy = "never",
+    cwd = vim.fn.getcwd(),
+  }
+  rpc("thread/start", params, function(err, res)
+    if err or not res then return cb(err and err.message or "thread/start failed") end
+    if state.cancelled then return end
+    state.thread = res.thread.id
+    ask_turn(state, text, cb)
+  end)
+end
+
+-- One read-only Codex turn on its own thread: cb(err, reply). Returns a cancel function.
+function M.ask(instructions, text, cb)
+  if vim.fn.executable("codex") == 0 then
+    cb("codex is not installed")
+    return function() end
+  end
+  local state = { cancelled = false }
+  local function go(err)
+    if state.cancelled then return end
+    if err then return cb(err) end
+    rpc("account/read", {}, function(aerr, acc)
+      if aerr or (acc and acc.requiresOpenaiAuth and not acc.account) then return cb("codex is logged out · run `codex login`") end
+      if not state.cancelled then ask_thread(state, instructions, text, cb) end
+    end)
+  end
+  codex_start()
+  if not codex.job then
+    cb("codex app-server did not start")
+    return function() end
+  end
+  if codex.ready then go() else table.insert(codex.queue, go) end
+  return function()
+    state.cancelled = true
+    if not state.thread then return end
+    codex.asks[state.thread] = nil
+    if state.turn then pcall(rpc, "turn/interrupt", { threadId = state.thread, turnId = state.turn }, function() end) end
+  end
 end
 
 -- Triggers and keys ---------------------------------------------------------------------------

@@ -433,7 +433,7 @@ function M.attach(buf, client)
   map("<leader>o", M.outline, "Outline")
   map("<leader>li", function() M.calls("incoming") end, "Incoming calls")
   map("<leader>lo", function() M.calls("outgoing") end, "Outgoing calls")
-  map("<leader>ca", vim.lsp.buf.code_action, "Code action", { "n", "v" })
+  require("ui.fix").attach(buf)
   if client:supports_method("textDocument/documentSymbol") then
     fetch(buf)
     for _, win in ipairs(vim.fn.win_findbuf(buf)) do set_winbar(win) end

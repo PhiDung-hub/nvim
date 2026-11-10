@@ -27,6 +27,7 @@ lua/core/edit.lua        autopairs, tag auto-close, #rrggbb swatches
 lua/core/git.lua         index-diff signs, branch for the tabline
 lua/ui/pick.lua          fuzzy picker with optional preview pane; also vim.ui.select
 lua/ui/lsp.lua           LSP/syntax UI: hover, peek, finder, outline, breadcrumbs, rename, calls, inspect
+lua/ui/fix.lua           quick fix: cursor-line hint, apply/pick with diff preview, fix-all, Codex/agent fallback
 lua/ui/tabline.lua       buffers + status segments
 lua/ui/term.lua          float terminal
 lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for neo-tree/fff
@@ -83,7 +84,9 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
   - `gf` finder: definitions ◆, implementations ◇ and references ● in one previewed list; a location keeps its strongest kind
   - `<leader>o` outline sidebar (right, follows the cursor and the focused LSP buffer, previews on move, closes when last)
   - breadcrumbs winbar ` ❯ dir/file › ◇ Class › ƒ method ` in LSP buffers (documentSymbol, refreshed 350 ms after edits)
-  - `gr` rename float (name preselected; typing replaces) · `<leader>li`/`<leader>lo` incoming/outgoing calls · `<leader>ca` code action
+  - `gr` rename float (name preselected; typing replaces) · `<leader>li`/`<leader>lo` incoming/outgoing calls
+  - Quick fix (`ui/fix.lua`): resting on a line with diagnostics shows ` ◆ <fix> +n  ⎵.` (quickfix-only request, 150 ms debounce). `<leader>.` / `<C-.>` (n/v) applies the one preferred (or only) quickfix, else opens ` ❯ quick fix ` with a diff preview (resolved lazily); `<leader>ca` always opens the full list. `<leader>cf` runs every `source.fixAll`, then preferred quickfixes one at a time, as one undo step. With diagnostics, the list offers `✦ Ask Codex to fix` (one read-only turn on the shared app-server, JSON line-range reply, previewed, 30 s timeout) and `✦ Ask <agent> to fix` when one is attached. `]d`/`[d` floats get a `⎵. quick fix · n available` footer.
+  - `<C-.>` needs WezTerm to encode it under xterm modifyOtherKeys (nvim sends `CSI >4;2m`; kitty keyboard is off). nvim decodes `CSI 27;5;46~` and `CSI 46;5u` as `<C-.>`; a physical press is untested, `<leader>.` always works. cargo-check diagnostics stay stale until save, so fix-all skips any whose line changed during the run.
   - `<leader>i` inspect: treesitter captures, semantic tokens, syntax and extmark groups with resolved colours, plus the node path · `<leader>I` syntax tree
   - `]d`/`[d` jump and show the diagnostics float · `<leader>lh` inlay hints
 - `vim.ui.select` goes through `ui/pick`. Prompt floats set `vim.b.completion = false`, or blink.cmp's buffer keymaps shadow their `<CR>`/`<Down>`/`<Up>`.

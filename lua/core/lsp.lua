@@ -83,10 +83,16 @@ local function start()
       source = "if_many", header = "", title = " ❯ diagnostics ", title_pos = "left",
       prefix = function(d) return glyphs[d.severity] .. " ", hls[d.severity] end,
     },
-    jump = { on_jump = function(_, bufnr) vim.diagnostic.open_float({ bufnr = bufnr, scope = "cursor", focus = false }) end },
+    jump = {
+      on_jump = function(_, bufnr)
+        local _, win = vim.diagnostic.open_float({ bufnr = bufnr, scope = "cursor", focus = false })
+        if win then require("ui.fix").float(win) end
+      end,
+    },
     signs = { text = glyphs },
   })
   require("ui.lsp").setup()
+  require("ui.fix").setup()
 end
 
 -- Deferred to the first file read or created, so starting nvim without a file does no LSP work.
