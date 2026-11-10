@@ -8,7 +8,7 @@ One look with WezTerm/Agent OS. The guideline lives in `~/.config/wezterm/DESIGN
 - The chrome follows the state colours: green done/running, yellow attention/waiting, blue ids/Codex, magenta shas/times/Claude, cyan args/paths/active tab, red failed, dim for idle or unknown. Code uses Tokyo Night syntax hues.
 - Square `single` borders only (`winborder`). Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `.
 - Rows read `glyph · id · text`, using the glyphs ✓ ◆ ○ ● ✗ ! ? ❯ ⎿ ▸ ▾.
-- One top bar like the WezTerm tab bar (`laststatus=0`, `showtabline=2`): buffers on the left as ` ● 1:name ` (active, solid cyan), ` ○ 2:name ` or ` ! n:name ` (pending agent hunks); solid segments on the right for mode, diagnostics, agent, hunks, branch and line:col.
+- One top bar like the WezTerm tab bar (`laststatus=0`, `showtabline=2`): buffers on the left as ` ● 1:name ` (active, solid cyan), ` ○ 2:name ` or ` ! n:name ` (pending agent hunks). Each tab carries its file icon, the name widened with parent dirs when two tabs share it (`a/init.lua`), `+` unsaved, a lock when read-only, and `✗n`/`!n` diagnostics; the focus tab adds `line:charcol` (absolute line, column in characters). Right side: mode, the current file's icon · filetype · language servers (Copilot omitted) · non-utf-8/non-unix flags, diagnostics, AI, agent, branch, and `totalL pct%`.
 - Shared highlight groups are `Aos*`: `AosSeg<Color>` for segments, `AosAgent*` for review hunks.
 
 ## Layout
@@ -18,7 +18,7 @@ init.lua                 options → lazy → autocmds → core → tabline → 
 colors/agentos.lua       colorscheme from lua/design.lua
 lua/design.lua           Agent OS tokens (verbatim from DESIGN.md)
 lua/plugins.lua          the only lazy spec
-lua/config/              options, lazy bootstrap, autocmds (reload, bigfile, sessions, indent guides), keymaps
+lua/config/              options, lazy bootstrap, autocmds (reload, bigfile, sessions, indent guides), keymaps, commands
 lsp/<name>.lua           one config per server (local copies of nvim-lspconfig's, trimmed)
 lua/core/lsp.lua         which servers to enable, TypeScript routing, LSP keymaps, diagnostics
 lua/core/treesitter.lua  FileType → vim.treesitter.start + indentexpr (size-guarded)
@@ -117,11 +117,16 @@ Ghost text tagged with its source (`● local` green, `● copilot` dim, `● co
 
 `q` visual block · `zh/zj/zk/zl` windows · `sv` vsplit · `<C-a>` select all · `<F3>` reindent · `<C-c>` copy · `<C-s>` save · `<C-z>/<C-y>` undo/redo · `<C-m-j/k>` move lines · `<Tab>/<S-Tab>` buffers · `<leader>1-5`/`<leader>0` go to buffer · `<C-q>`/`db` close · `dlb`/`drb` close left/right · `\\` buffers · `;t` help · `;e` diagnostics · `;f`/`;r`/`;;` fff · `<M-t>` tree · `<m-->` terminal · `<leader>f` format · `<leader>qs`/`<leader>ql` sessions · `<leader>p` / `:Markdown` toggle markdown rendering.
 
+## Commands (lua/config/commands.lua)
+
+- `<leader>:` palette over every described normal-mode keymap and user command, most used first (counts persist in shada as `g:AOS_PALETTE`). Commands taking arguments are typed into the cmdline for you.
+- `:Q :Qa :W :Wq :Wa :Wqa` typo aliases · `:LspInfo` (checkhealth vim.lsp) · `:LspRestart` · `:LspLog` · `:Format [toggle]` · `:Markdown` · `:Complete` · `:Agent`. nvim 0.12's own `:lsp enable|disable|restart|stop` also works.
+
 ## Behaviour notes
 
 - Markdown (`ui/markdown.lua`): headings ❯…, setext too; code blocks with a border, language label and tinted body; bullets · ○ ◆; checkboxes ○ ✓; quotes ▏; rules; pipe tables boxed when aligned (│ overlays only when not). Renders the visible range plus a margin, debounced; the cursor line and the line being edited stay raw; hover floats render too. Skips big files.
 
-- Format-on-save is **off** (conform never had it on). `:FormatToggle` turns it on.
+- Format-on-save is **off** (conform never had it on). `:Format toggle` turns it on.
 - `autoread` + `config/autocmds.lua` checks the current file every second and on focus. While an agent is attached, every visible buffer is checked every 2 s.
 - Big files (≥ 1.5 MiB) are decided on every read: no treesitter, LSP, swap or undo. Treesitter highlighting also stops above 512 KiB.
 

@@ -75,10 +75,11 @@ function M.setup()
     end,
   })
   vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost", "InsertLeave" }, { group = group, pattern = "*.sol", callback = function(ev) solhint(ev.buf) end })
-  vim.api.nvim_create_user_command("FormatToggle", function()
+  vim.api.nvim_create_user_command("Format", function(o)
+    if o.args ~= "toggle" then return M.format() end
     vim.g.autoformat = not vim.g.autoformat
     vim.notify(vim.g.autoformat and "✓ format on save" or "○ format on save off")
-  end, {})
+  end, { nargs = "?", complete = function() return { "toggle" } end, desc = "Format buffer, or toggle format on save" })
 end
 
 return M

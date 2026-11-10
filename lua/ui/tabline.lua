@@ -1,6 +1,7 @@
 -- One top bar like the WezTerm tab bar: listed buffers left (` ● 1:name `), status segments right.
 local M = {}
 local g = require("design").glyphs
+local icons = require("ui.icons")
 
 local function esc(s) return (s:gsub("%%", "%%%%")) end
 
@@ -14,21 +15,66 @@ function M.listed()
   return vim.tbl_filter(function(b) return vim.bo[b].buflisted and not blank(b) end, vim.api.nvim_list_bufs())
 end
 
-local function buf_label(buf, index)
-  local name = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":t")
-  if name == "" then name = "[No Name]" end
-  if #name > 24 then name = name:sub(1, 23) .. "…" end
+-- Inactive tabs sit on TabLine's surface, so accent colours are re-derived onto that background.
+local derived = {}
+local function on_surface(group)
+  if derived[group] then return derived[group] end
+  local bg = vim.api.nvim_get_hl(0, { name = "TabLine", link = false }).bg
+  derived[group] = "AosTab" .. group
+  vim.api.nvim_set_hl(0, derived[group], { fg = vim.api.nvim_get_hl(0, { name = group, link = false }).fg, bg = bg })
+  return derived[group]
+end
+
+local function tail(path, depth)
+  local parts = vim.split(path, "/", { trimempty = true })
+  return table.concat(parts, "/", math.max(1, #parts - depth))
+end
+
+-- File names, widened with parent directories until no two tabs share one.
+local function unique_names(bufs)
+  local depth, names = {}, {}
+  for _ = 0, 3 do
+    local count, clash = {}, false
+    for _, b in ipairs(bufs) do
+      names[b] = tail(vim.api.nvim_buf_get_name(b), depth[b] or 0)
+      count[names[b]] = (count[names[b]] or 0) + 1
+    end
+    for _, b in ipairs(bufs) do
+      if names[b] ~= "" and count[names[b]] > 1 then depth[b], clash = (depth[b] or 0) + 1, true end
+    end
+    if not clash then break end
+  end
+  return names
+end
+
+local lock = "\u{f023}"
+
+local function buf_label(buf, index, name)
   local current = buf == vim.api.nvim_get_current_buf()
+  local base = "%#" .. (current and "TabLineSel" or "TabLine") .. "#"
+  local function paint(group, text) return (current and "" or "%#" .. on_surface(group) .. "#") .. text .. base end
   local mark = require("agent.review").pending(buf) > 0 and g.attention or current and g.reply or g.todo
-  if vim.bo[buf].modified then name = name .. " +" end
-  local hl = current and "%#TabLineSel#" or "%#TabLine#"
-  return ("%%%d@v:lua.AosTabClick@%s %s %d:%s %%X"):format(buf, hl, mark, index, esc(name)), current
+  local terminal = vim.bo[buf].buftype == "terminal"
+  local icon, icon_hl = icons.get_icon(terminal and "terminal" or name:match("[^/]*$"), nil, { default = true })
+  if name == "" then name = "[No Name]" end
+  if #name > 28 then name = "…" .. name:sub(-27) end
+  local dir, file = name:match("^(.*/)([^/]*)$")
+  local label = paint(icon_hl, icon) .. " " .. (dir and paint("AosDim", esc(dir)) .. esc(file) or esc(name))
+  if vim.bo[buf].modified then label = label .. " " .. paint("AosRunning", "+") end
+  if not terminal and (vim.bo[buf].readonly or not vim.bo[buf].modifiable) then label = label .. " " .. paint("AosDim", lock) end
+  local counts = vim.diagnostic.count(buf)
+  if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
+  if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
+  if current then label = label .. (" %d:%d"):format(vim.fn.line("."), vim.fn.charcol(".")) end
+  return ("%%%d@v:lua.AosTabClick@%s %s %d:%s %%X"):format(buf, base, mark, index, label), current
 end
 
 local function tabs(room)
   local parts, widths, current = {}, {}, 1
-  for i, buf in ipairs(M.listed()) do
-    local text, is_current = buf_label(buf, i)
+  local bufs = M.listed()
+  local names = unique_names(bufs)
+  for i, buf in ipairs(bufs) do
+    local text, is_current = buf_label(buf, i, names[buf])
     parts[#parts + 1] = text
     widths[#widths + 1] = vim.api.nvim_eval_statusline(text, { use_tabline = true }).width
     if is_current then current = i end
@@ -59,17 +105,34 @@ local function diagnostics()
   return out
 end
 
+-- Current file: filetype icon and name, attached language servers, and any non-default encoding/format.
+local function file_info()
+  local ft = vim.bo.filetype
+  if ft == "" then return "" end
+  local icon, hl = icons.get_icon_by_filetype(ft, { default = true })
+  local clients = vim.tbl_map(function(c) return c.name end, vim.lsp.get_clients({ bufnr = 0 }))
+  clients = vim.tbl_filter(function(n) return n ~= "copilot" end, clients)
+  local out = ("%%#%s#%s %%#AosDim#%s"):format(hl, icon, esc(ft))
+  if #clients > 0 then out = out .. "%#AosFaint# · %#AosId#" .. esc(table.concat(clients, ",")) end
+  local enc = vim.bo.fileencoding
+  if (enc ~= "" and enc ~= "utf-8") or vim.bo.fileformat ~= "unix" then
+    out = out .. "%#AosFaint# · %#AosRunning#" .. esc(enc) .. (vim.bo.fileformat ~= "unix" and " " .. vim.bo.fileformat or "")
+  end
+  return out .. " "
+end
+
 function M.render()
   local right = {}
   local mode = modes[vim.fn.mode():sub(1, 1)]
   if mode then right[#right + 1] = segment("AosSegYellow", mode) end
+  right[#right + 1] = file_info()
   right[#right + 1] = diagnostics()
   local ai = require("core.complete").segment()
   if ai then right[#right + 1] = segment(ai.hl, ai.text) end
   for _, seg in ipairs(require("agent").segments()) do right[#right + 1] = segment(seg.hl, seg.text) end
   local branch = require("core.git").branch()
   if branch then right[#right + 1] = segment("AosSegBlue", branch) end
-  right[#right + 1] = segment("AosSegMagenta", ("%d:%d"):format(vim.fn.line("."), vim.fn.col(".")))
+  right[#right + 1] = segment("AosSegMagenta", ("%dL %d%%"):format(vim.fn.line("$"), math.floor(vim.fn.line(".") * 100 / vim.fn.line("$"))))
   local status = table.concat(right)
   local room = vim.o.columns - vim.api.nvim_eval_statusline(status, { use_tabline = true }).width - 2
   return "%#TabLineFill# " .. tabs(room) .. "%#TabLineFill#%=" .. status
@@ -91,9 +154,16 @@ function M.close_side(side)
 end
 
 vim.o.tabline = "%!v:lua.require'ui.tabline'.render()"
-vim.api.nvim_create_autocmd({ "ModeChanged", "DiagnosticChanged", "BufModifiedSet" }, {
-  group = vim.api.nvim_create_augroup("AosTabline", {}),
+local group = vim.api.nvim_create_augroup("AosTabline", {})
+vim.api.nvim_create_autocmd({ "ModeChanged", "DiagnosticChanged", "BufModifiedSet", "LspAttach", "LspDetach", "FileType", "CursorMoved", "CursorMovedI" }, {
+  group = group,
   callback = function() vim.cmd.redrawtabline() end,
 })
+vim.api.nvim_create_autocmd("OptionSet", {
+  group = group,
+  pattern = { "readonly", "modifiable", "fileformat", "fileencoding" },
+  callback = function() vim.cmd.redrawtabline() end,
+})
+vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = function() derived = {} end })
 
 return M
