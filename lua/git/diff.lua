@@ -282,13 +282,13 @@ local KEYS = {
   { "<C-h>", function() D.opts.focus(-1) end, "focus left" },
   { "<C-l>", function() D.opts.focus(1) end, "focus right" },
   { "s", stage_hunk, "stage hunk" },
-  { "u", unstage_hunk, "unstage hunk" },
+  { "u", unstage_hunk, "unstage hunk (staged diff; undo in the working file)" },
   { "x", revert_hunk, "revert hunk" },
   { "]c", function() jump(1) end, "next hunk" },
   { "[c", function() jump(-1) end, "previous hunk" },
   { "<leader>gd", toggle, "toggle inline / side by side" },
 }
-M.KEYS = KEYS
+M.keys = { { section = "Diff pane", keys = vim.tbl_map(function(k) return { k[1], k[3] } end, KEYS) } }
 
 -- The working file keeps its own buffer-local mappings outside the popup: they are saved and restored.
 -- It also keeps native `u` (undo): only the index scratch buffers unstage hunks.

@@ -15,7 +15,8 @@ local SECTIONS = {
   { key = "changes", title = "Changes", always = true },
 }
 local LETTER_HL = { M = "AosRunning", T = "AosRunning", A = "AosDone", U = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", ["!"] = "AosFailed" }
-local HINT = " ⏎ diff · s/u stage · x discard · c commit · ⇥ diff · g? help "
+local HINT = " ⏎ diff · s/u stage · x discard · c commit · ⇥ fold · g? help "
+local FLOAT_KEYS = { { "q", "close" }, { "<Esc>", "close" } }
 
 local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, { title = "git" }) end
 local function visible() return S.win ~= nil and vim.api.nvim_win_is_valid(S.win) end
@@ -34,8 +35,10 @@ local function float(title, text)
     col = math.floor((vim.o.columns - width) / 2), title = " ❯ " .. title .. " ", title_pos = "left", zindex = 60,
   })
   vim.wo[win].number, vim.wo[win].relativenumber, vim.wo[win].signcolumn, vim.wo[win].wrap = false, false, "no", true
-  for _, lhs in ipairs({ "q", "<Esc>" }) do vim.keymap.set("n", lhs, "<cmd>close<cr>", { buffer = buf, nowait = true }) end
+  for _, k in ipairs(FLOAT_KEYS) do vim.keymap.set("n", k[1], "<cmd>close<cr>", { buffer = buf, nowait = true, desc = k[2] }) end
 end
+
+local function data(list) return vim.tbl_map(function(k) return { k[1], k[3] } end, list) end
 
 local function fail(what, err) float(what .. " · failed", "✗ " .. what .. "\n\n" .. err) end
 
@@ -457,6 +460,12 @@ local function commit(root, msg, amend, done)
   end)
 end
 
+local COMMIT_KEYS = {
+  { "<C-s>", "submit", "commit (also :w)", { "n", "i" } },
+  { "q", "close", "cancel (keeps the message as a draft)" },
+  { "<Esc>", "close", "cancel (keeps the message as a draft)" },
+}
+
 local function editor(root, amend, text)
   local buf = vim.api.nvim_create_buf(false, false)
   vim.api.nvim_buf_set_name(buf, "gitscm://" .. (amend and "amend" or "commit") .. "/" .. buf)
@@ -487,8 +496,8 @@ local function editor(root, amend, text)
     end)
   end
   vim.api.nvim_create_autocmd("BufWriteCmd", { buffer = buf, callback = submit })
-  vim.keymap.set({ "n", "i" }, "<C-s>", submit, { buffer = buf })
-  for _, lhs in ipairs({ "q", "<Esc>" }) do vim.keymap.set("n", lhs, close, { buffer = buf, nowait = true }) end
+  local act = { submit = submit, close = close }
+  for _, k in ipairs(COMMIT_KEYS) do vim.keymap.set(k[4] or "n", k[1], act[k[2]], { buffer = buf, nowait = true, desc = k[3] }) end
   if text == "" then vim.cmd.startinsert() end
 end
 
@@ -565,6 +574,8 @@ local function tab()
   focus(0)
 end
 
+local help
+
 local KEYS = {
   { "<CR>", activate, "diff (focus it) · fold section · edit message" },
   { "o", activate, "diff (focus it)" },
@@ -587,14 +598,21 @@ local KEYS = {
   { "r", function() refresh() end, "refresh" },
   { "q", function() M.close() end, "close" },
   { "<Esc>", function() M.close() end, "close" },
+  { "g?", function() help() end, "this help" },
 }
 
-local function help()
-  local lines = { "file list" }
-  for _, k in ipairs(KEYS) do lines[#lines + 1] = ("  %-8s %s"):format(k[1], k[3]) end
-  lines[#lines + 1] = "  g?       this help"
-  lines[#lines + 1] = "diff pane"
-  for _, k in ipairs(diff.KEYS) do lines[#lines + 1] = ("  %-8s %s"):format(k[1], k[3]) end
+M.keys = {
+  { section = "Source Control", keys = data(KEYS) },
+  { section = "Commit editor", keys = data(COMMIT_KEYS) },
+  { section = "Git output", keys = FLOAT_KEYS },
+}
+
+help = function()
+  local lines = {}
+  for _, sec in ipairs({ M.keys[1], diff.keys[1], M.keys[2], M.keys[3] }) do
+    lines[#lines + 1] = "❯ " .. sec.section
+    for _, k in ipairs(sec.keys) do lines[#lines + 1] = ("  %-11s %s"):format(k[1], k[2]) end
+  end
   float("git keys", table.concat(lines, "\n"))
 end
 
@@ -603,7 +621,6 @@ local function make_buf()
   vim.bo[S.buf].filetype = "gitscm"
   vim.b[S.buf].completion = false
   for _, k in ipairs(KEYS) do vim.keymap.set(k[4] or "n", k[1], k[2], { buffer = S.buf, nowait = true, desc = k[3] }) end
-  vim.keymap.set("n", "g?", help, { buffer = S.buf, nowait = true, desc = "git keys" })
   vim.api.nvim_create_autocmd("CursorMoved", {
     buffer = S.buf,
     callback = function()
