@@ -13,5 +13,9 @@ return {
       local params = { command = "pyright.organizeimports", arguments = { vim.uri_from_bufnr(buf) } }
       client:request("workspace/executeCommand", params, nil, buf)
     end, { desc = "Organize Imports" })
+    vim.api.nvim_buf_create_user_command(buf, "LspPyrightSetPythonPath", function(cmd)
+      client.settings.python = vim.tbl_deep_extend("force", client.settings.python or {}, { pythonPath = cmd.args })
+      client:notify("workspace/didChangeConfiguration", { settings = nil })
+    end, { desc = "Reconfigure pyright with the provided python path", nargs = 1, complete = "file" })
   end,
 }

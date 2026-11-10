@@ -22,5 +22,14 @@ return {
         vim.cmd.edit(vim.uri_to_fname(uri))
       end, buf)
     end, { desc = "Switch between source/header" })
+    vim.api.nvim_buf_create_user_command(buf, "LspClangdShowSymbolInfo", function()
+      local params = vim.lsp.util.make_position_params(0, client.offset_encoding)
+      client:request("textDocument/symbolInfo", params, function(err, res)
+        if err or not res or #res == 0 then return end
+        local container = res[1].containerName
+        local lines = { "name: " .. res[1].name, "container: " .. (type(container) == "string" and container or "") }
+        vim.lsp.util.open_floating_preview(lines, "", { focusable = false, focus = false, title = "Symbol Info" })
+      end, buf)
+    end, { desc = "Show symbol info" })
   end,
 }

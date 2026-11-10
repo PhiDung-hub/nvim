@@ -17,6 +17,7 @@ local function root_dir(buf, on_dir)
   if reused then return on_dir(reused) end
   local crate = vim.fs.root(fname, { "Cargo.toml" })
   if not crate then return on_dir(vim.fs.root(fname, { "rust-project.json", ".git" })) end
+  if vim.fn.executable("cargo") == 0 then return vim.notify_once("rust_analyzer: cargo not found", vim.log.levels.WARN) end
   local cmd = { "cargo", "metadata", "--no-deps", "--format-version", "1", "--manifest-path", crate .. "/Cargo.toml" }
   vim.system(cmd, { text = true }, function(out)
     if out.code ~= 0 then
