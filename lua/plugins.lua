@@ -139,17 +139,6 @@ return {
     },
   },
   {
-    "MeanderingProgrammer/render-markdown.nvim",
-    ft = { "markdown" },
-    keys = { { "<leader>p", "<cmd>RenderMarkdown toggle<cr>", ft = "markdown", desc = "Toggle markdown render" } },
-    opts = {
-      heading = { sign = false, icons = { "❯ ", "❯❯ ", "❯❯❯ ", "❯❯❯❯ ", "❯❯❯❯❯ ", "❯❯❯❯❯❯ " }, backgrounds = {} },
-      code = { sign = false, border = "thin" },
-      bullet = { icons = { "·", "○", "◆" } },
-      checkbox = { unchecked = { icon = "○ " }, checked = { icon = "✓ " } },
-    },
-  },
-  {
     "Julian/lean.nvim",
     event = { "BufReadPre *.lean", "BufNewFile *.lean" },
     dependencies = { "neovim/nvim-lspconfig" },

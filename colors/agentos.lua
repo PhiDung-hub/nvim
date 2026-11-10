@@ -179,6 +179,8 @@ local hl = {
   AosIconGreen = { fg = t.green },
   AosIconMagenta = { fg = t.magenta },
   AosIconDim = { fg = t.dim },
+  AosBorder = { fg = t.border },
+  AosMdCode = { bg = t.selection_soft },
   GitAdd = { fg = t.green },
   GitChange = { fg = t.yellow },
   GitDelete = { fg = t.red },
@@ -201,9 +203,6 @@ local hl = {
   BlinkCmpLabelMatch = { fg = t.cyan, bold = true },
   BlinkCmpSource = { fg = t.faint },
   FFFBorder = { link = "FloatBorder" },
-  RenderMarkdownCode = { bg = t.selection_soft },
-  RenderMarkdownH1Bg = { fg = t.blue, bold = true },
-  RenderMarkdownH2Bg = { fg = t.cyan, bold = true },
 }
 
 for name, spec in pairs(hl) do
