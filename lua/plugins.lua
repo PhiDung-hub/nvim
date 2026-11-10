@@ -3,6 +3,25 @@ local parsers = {
   "lua", "python", "javascript", "typescript", "tsx", "json", "html", "css", "scss", "markdown",
   "markdown_inline", "gitignore", "svelte", "solidity", "move", "rust", "toml", "yaml", "bash", "comment",
 }
+local kind_icons = {
+  Method = "ƒ", Function = "ƒ", Constructor = "ƒ", Operator = "ƒ",
+  Class = "◇", Interface = "◇", Struct = "◇", Enum = "◇", TypeParameter = "◇",
+  Module = "▣", File = "▣", Folder = "▸", Reference = "▣",
+  Variable = "·", Field = "·", Property = "·",
+  Constant = "·", Value = "·", EnumMember = "·", Unit = "·", Color = "·", Event = "·",
+  Keyword = "§", Snippet = "≡", Text = "¶",
+}
+local source_tag = { buffer = "buf", cmdline = "cmd" }
+local function draw_docs(opts)
+  opts.default_implementation()
+  local buf, ns = opts.window:get_buf(), require("blink.cmp.config").appearance.highlight_ns
+  local rule = { { ("─"):rep(opts.config.window.max_width), "BlinkCmpDocSeparator" } }
+  for i, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    if line:match("^ *[-*_] *[-*_] *[-*_][-*_ ]*$") then
+      vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 0, { virt_text = rule, virt_text_pos = "overlay" })
+    end
+  end
+end
 
 return {
   {
@@ -28,14 +47,33 @@ return {
       completion = {
         menu = {
           border = "single",
-          draw = { columns = { { "kind_icon" }, { "label", "label_description", gap = 1 }, { "source_name" } } },
+          draw = {
+            columns = { { "kind_icon" }, { "label", "label_description", gap = 1 }, { "source" } },
+            components = {
+              source = {
+                width = { max = 10 },
+                text = function(ctx) return ctx.item.client_name or source_tag[ctx.source_id] or ctx.source_id end,
+                highlight = "BlinkCmpSource",
+              },
+            },
+          },
         },
-        documentation = { auto_show = true, auto_show_delay_ms = 200, window = { border = "single" } },
+        documentation = { auto_show = true, auto_show_delay_ms = 200, draw = draw_docs, window = { border = "single" } },
         list = { selection = { preselect = false, auto_insert = false } },
       },
-      signature = { enabled = true, window = { border = "single" } },
-      appearance = { nerd_font_variant = "mono" },
+      signature = { enabled = true, window = { border = "single", max_width = 80 } },
+      appearance = { nerd_font_variant = "mono", kind_icons = kind_icons },
     },
+    init = function()
+      local titles = { ["blink-cmp-documentation"] = " ❯ docs ", ["blink-cmp-signature"] = " ❯ signature " }
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = vim.tbl_keys(titles),
+        callback = function(ev)
+          local win = vim.fn.bufwinid(ev.buf)
+          if win > 0 then vim.api.nvim_win_set_config(win, { title = titles[ev.match] }) end
+        end,
+      })
+    end,
   },
   {
     "mason-org/mason.nvim",
