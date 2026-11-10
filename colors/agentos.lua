@@ -222,9 +222,9 @@ local hl = {
   BlinkCmpSignatureHelpBorder = { link = "FloatBorder" },
   BlinkCmpLabelMatch = { fg = t.cyan, bold = true },
   BlinkCmpLabelDeprecated = { fg = t.dim, strikethrough = true },
-  BlinkCmpSource = { fg = t.faint },
+  BlinkCmpSource = { fg = t.dim, italic = true },
   BlinkCmpDocSeparator = { fg = t.faint, bg = t.ground },
-  BlinkCmpSignatureHelpActiveParameter = { fg = t.cyan, bold = true },
+  BlinkCmpSignatureHelpActiveParameter = { fg = t.cyan, bg = t.selection, bold = true },
   BlinkCmpGhostText = { fg = t.dim, italic = true },
   BlinkCmpKind = { fg = t.muted },
 }
