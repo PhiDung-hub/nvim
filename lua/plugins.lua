@@ -3,6 +3,15 @@ local parsers = {
   "lua", "python", "javascript", "typescript", "tsx", "json", "html", "css", "scss", "markdown",
   "markdown_inline", "gitignore", "svelte", "solidity", "move", "rust", "toml", "yaml", "bash", "comment",
 }
+local kind_icons = {
+  Method = "ƒ", Function = "ƒ", Constructor = "ƒ", Operator = "ƒ",
+  Class = "◇", Interface = "◇", Struct = "◇", Enum = "◇", TypeParameter = "◇",
+  Module = "▣", File = "▣", Folder = "▸", Reference = "▣",
+  Variable = "▪", Field = "▪", Property = "▪",
+  Constant = "▪", Value = "▪", EnumMember = "▪", Unit = "▪", Color = "▪", Event = "▪",
+  Keyword = "§", Snippet = "≡", Text = "·",
+}
+local source_tag = { buffer = "buf", snippets = "snip", cmdline = "cmd" }
 
 return {
   {
@@ -28,14 +37,33 @@ return {
       completion = {
         menu = {
           border = "single",
-          draw = { columns = { { "kind_icon" }, { "label", "label_description", gap = 1 }, { "source_name" } } },
+          draw = {
+            columns = { { "kind_icon" }, { "label", "label_description", gap = 1 }, { "source" } },
+            components = {
+              source = {
+                width = { max = 10 },
+                text = function(ctx) return ctx.item.client_name or source_tag[ctx.source_id] or ctx.source_id end,
+                highlight = "BlinkCmpSource",
+              },
+            },
+          },
         },
         documentation = { auto_show = true, auto_show_delay_ms = 200, window = { border = "single" } },
         list = { selection = { preselect = false, auto_insert = false } },
       },
-      signature = { enabled = true, window = { border = "single" } },
-      appearance = { nerd_font_variant = "mono" },
+      signature = { enabled = true, window = { border = "single", max_width = 80 } },
+      appearance = { nerd_font_variant = "mono", kind_icons = kind_icons },
     },
+    init = function()
+      local titles = { ["blink-cmp-documentation"] = " ❯ docs ", ["blink-cmp-signature"] = " ❯ signature " }
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = vim.tbl_keys(titles),
+        callback = function(ev)
+          local win = vim.fn.bufwinid(ev.buf)
+          if win > 0 then vim.api.nvim_win_set_config(win, { title = titles[ev.match] }) end
+        end,
+      })
+    end,
   },
   {
     "mason-org/mason.nvim",

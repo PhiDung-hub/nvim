@@ -215,13 +215,29 @@ local hl = {
   NeoTreeIndentMarker = { fg = t.faint },
   NeoTreeFloatBorder = { link = "FloatBorder" },
   NeoTreeFloatTitle = { link = "FloatTitle" },
+  FFFBorder = { link = "FloatBorder" },
+  -- completion
   BlinkCmpMenuBorder = { link = "FloatBorder" },
   BlinkCmpDocBorder = { link = "FloatBorder" },
   BlinkCmpSignatureHelpBorder = { link = "FloatBorder" },
   BlinkCmpLabelMatch = { fg = t.cyan, bold = true },
+  BlinkCmpLabelDeprecated = { fg = t.dim, strikethrough = true },
   BlinkCmpSource = { fg = t.faint },
-  FFFBorder = { link = "FloatBorder" },
+  BlinkCmpDocSeparator = { fg = t.faint, bg = t.ground },
+  BlinkCmpSignatureHelpActiveParameter = { fg = t.cyan, bold = true },
+  BlinkCmpGhostText = { fg = t.dim, italic = true },
+  BlinkCmpKind = { fg = t.muted },
 }
+for group, kinds in pairs({
+  AosIconBlue = "Method Function Constructor Operator",
+  AosIconMagenta = "Class Interface Struct Enum TypeParameter",
+  AosIconCyan = "Module File Folder Reference",
+  AosIconYellow = "Constant Value EnumMember Unit Color Event",
+  AosIconGreen = "Snippet",
+  AosIconDim = "Keyword Text",
+}) do
+  for kind in kinds:gmatch("%a+") do hl["BlinkCmpKind" .. kind] = { link = group } end
+end
 
 for name, spec in pairs(hl) do
   vim.api.nvim_set_hl(0, name, spec)
