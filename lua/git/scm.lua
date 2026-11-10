@@ -15,7 +15,8 @@ local SECTIONS = {
   { key = "changes", title = "Changes", always = true },
 }
 local LETTER_HL = { M = "AosRunning", T = "AosRunning", A = "AosDone", U = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", ["!"] = "AosFailed" }
-local HINT = " ⏎ diff · s/u stage · x discard · c commit · ⇥ diff · g? help "
+local HINT = " ⏎ diff · s/u stage · x discard · c commit · ⇥ fold · g? help "
+local FLOAT_KEYS = { { "q", "close" }, { "<Esc>", "close" } }
 
 local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, { title = "git" }) end
 local function visible() return S.win ~= nil and vim.api.nvim_win_is_valid(S.win) end
@@ -34,7 +35,7 @@ local function float(title, text)
     col = math.floor((vim.o.columns - width) / 2), title = " ❯ " .. title .. " ", title_pos = "left", zindex = 60,
   })
   vim.wo[win].number, vim.wo[win].relativenumber, vim.wo[win].signcolumn, vim.wo[win].wrap = false, false, "no", true
-  for _, lhs in ipairs({ "q", "<Esc>" }) do vim.keymap.set("n", lhs, "<cmd>close<cr>", { buffer = buf, nowait = true, desc = "close" }) end
+  for _, k in ipairs(FLOAT_KEYS) do vim.keymap.set("n", k[1], "<cmd>close<cr>", { buffer = buf, nowait = true, desc = k[2] }) end
 end
 
 local function data(list) return vim.tbl_map(function(k) return { k[1], k[3] } end, list) end
@@ -603,11 +604,12 @@ local KEYS = {
 M.keys = {
   { section = "Source Control", keys = data(KEYS) },
   { section = "Commit editor", keys = data(COMMIT_KEYS) },
+  { section = "Git output", keys = FLOAT_KEYS },
 }
 
 help = function()
   local lines = {}
-  for _, sec in ipairs({ M.keys[1], diff.keys[1], M.keys[2] }) do
+  for _, sec in ipairs({ M.keys[1], diff.keys[1], M.keys[2], M.keys[3] }) do
     lines[#lines + 1] = "❯ " .. sec.section
     for _, k in ipairs(sec.keys) do lines[#lines + 1] = ("  %-11s %s"):format(k[1], k[2]) end
   end
