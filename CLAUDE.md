@@ -1,12 +1,12 @@
 # Neovim Configuration
 
-Neovim 0.12 config on **lazy.nvim**. Eleven large plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 12 ms headless.
+Neovim 0.12 config on **lazy.nvim**. Twelve upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 12 ms headless.
 
 ## Design
 
 One look with WezTerm/Agent OS. The guideline lives in `~/.config/wezterm/DESIGN.md`, and that file wins. `lua/design.lua` is its token block copied verbatim; `colors/agentos.lua` paints from it.
 - The chrome follows the state colours: green done/running, yellow attention/waiting, blue ids/Codex, magenta shas/times/Claude, cyan args/paths/active tab, red failed, dim for idle or unknown. Code uses Tokyo Night syntax hues.
-- Square `single` borders only (`winborder`), ground background, and floats titled ` ❯ verb `.
+- Square `single` borders only (`winborder`). Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `.
 - Rows read `glyph · id · text`, using the glyphs ✓ ◆ ○ ● ✗ ! ? ❯ ⎿ ▸ ▾.
 - One top bar like the WezTerm tab bar (`laststatus=0`, `showtabline=2`): buffers on the left as ` ● 1:name ` (active, solid cyan), ` ○ 2:name ` or ` ! n:name ` (pending agent hunks); solid segments on the right for mode, diagnostics, agent, hunks, branch and line:col.
 - Shared highlight groups are `Aos*`: `AosSeg<Color>` for segments, `AosAgent*` for review hunks.
@@ -33,11 +33,44 @@ lua/agent/               Claude/Codex co-working (below)
 
 ## Plugins (lua/plugins.lua)
 
-blink.cmp, nvim-lspconfig (server defaults only), mason.nvim (installer only, on `:Mason`; `mason/bin` is prepended to PATH in options.lua), nvim-treesitter (**main** branch), neo-tree (+plenary, nui, web-devicons; neo-tree's filesystem source requires plenary), fff, render-markdown, lean.nvim.
+12 upstream plugins (lazy.nvim included). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
 
-Replaced locally: bufferline/lualine → `ui/tabline`; telescope/lspsaga → `ui/pick` + native LSP; toggleterm → `ui/term`; gitsigns → `core/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`.
+```
+lazy.nvim                       plugin manager                    13.4k Lua · needs git
+├── blink.cmp  v1.*             completion menu (lsp/path/buffer)  14.7k Lua + native libblink_cmp_fuzzy.so
+├── nvim-lspconfig              server defaults only (lsp/*.lua)   49.9k Lua (data; ~20 configs used)
+│   └── lean.nvim               Lean LSP + infoview, *.lean        15.1k Lua · needs lean/lake (elan)
+├── mason.nvim                  installer, on :Mason only          15.0k Lua · bin/ prepended to PATH
+├── nvim-treesitter  main       parser install + queries + indent   4.6k Lua + queries · needs tree-sitter CLI ≥0.26, cc
+│   └── render-markdown.nvim    in-buffer markdown, ft=markdown    10.9k Lua · uses markdown/markdown_inline parsers
+├── neo-tree.nvim  v3.x         file tree, cmd/keys                23.8k Lua
+│   ├── plenary.nvim            plenary.job/async (hard require)   13.1k Lua
+│   ├── nui.nvim                windows/popups (hard require)       6.9k Lua
+│   └── nvim-web-devicons       file icons (also optional for fff, render-markdown)  2.5k Lua
+└── fff  v0.11.0                file/content search, keys          10.2k Lua + native libfff_nvim.so (download_or_build)
+```
 
-Dropped: codecompanion (superseded by `lua/agent`), which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
+Hard edges: neo-tree → plenary, nui, devicons; lean.nvim → nvim-lspconfig (spec dependency). Soft edges (`pcall`): fff → devicons/plenary.filetype, render-markdown → devicons. Nothing else requires another plugin.
+
+External tools outside lazy: language servers and formatters in `~/.local/share/nvim/mason/bin` (copilot-language-server, lua-language-server, pyright, ruff, rust-analyzer fallback, stylua, prettierd, taplo, yaml/json/html/css/svelte/tailwind/emmet/bash/prisma servers…), rustup `rust-analyzer`, TypeScript 7 `tsc`, `llama-server` + model in `~/.local/share/llama`, `codex`, `wezterm`, `rg`, `git`, `wl-copy`/`xsel`, `solhint`, `forge`.
+
+### Replacement plan (next local rewrites, easiest first)
+
+| # | Plugin(s) | Local replacement | Effort | Notes |
+|---|---|---|---|---|
+| 1 | nvim-web-devicons | `ui/icons.lua`: extension/filename → glyph + colour table | small | fff and render-markdown already `pcall` it; neo-tree needs a shim or goes with step 3 |
+| 2 | render-markdown | `ui/markdown.lua`: extmarks for headings, code blocks, lists, checkboxes, tables | medium | parsers already installed |
+| 3 | neo-tree + nui + plenary | `ui/tree.lua`: libuv scan, git status from `core/git`, split sidebar | medium | removes three plugins at once |
+| 4 | fff | `ui/pick` + `rg --files` / `rg --vimgrep`, frecency from `v:oldfiles` | medium | loses fff's native scorer |
+| 5 | mason | `:Tools` installing via npm/cargo/pip into one bin dir | medium | keep the existing bin dir on PATH |
+| 6 | nvim-lspconfig | inline the ~20 used configs as `lsp/<name>.lua` | small, data | `vim.lsp.config` reads `lsp/` from the runtimepath |
+| 7 | lazy.nvim | `vim.pack` (built into nvim 0.12) | medium | lockfile and lazy-loading move to local code |
+| 8 | blink.cmp | native `vim.lsp.completion` + small path/buffer sources | large | fuzzy ranking is the hard part |
+| — | nvim-treesitter, lean.nvim | keep | — | queries/parser builds and the Lean infoview are too large to own |
+
+Replaced locally already: bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns → `core/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`.
+
+Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
 
 ## LSP (lua/core/lsp.lua)
 

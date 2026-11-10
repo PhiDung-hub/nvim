@@ -16,7 +16,8 @@ vim.o.background = "dark"
 vim.g.colors_name = "agentos"
 
 local hl = {
-  Normal = { fg = t.text, bg = t.ground },
+  -- Content leaves the background to WezTerm, so its wallpaper shows; floats keep `ground` (DESIGN.md).
+  Normal = { fg = t.text },
   NormalNC = { link = "Normal" },
   NormalFloat = { fg = t.text, bg = t.ground },
   FloatBorder = { fg = t.border, bg = t.ground },
@@ -29,7 +30,7 @@ local hl = {
   ColorColumn = { bg = t.selection_soft },
   CursorLineNr = { fg = t.yellow, bold = true },
   LineNr = { fg = t.faint },
-  SignColumn = { bg = t.ground },
+  SignColumn = {},
   FoldColumn = { fg = t.faint },
   Folded = { fg = t.dim, bg = t.selection_soft },
   NonText = { fg = t.faint },
@@ -47,11 +48,13 @@ local hl = {
   PmenuThumb = { bg = t.border },
   PmenuKind = { fg = t.cyan },
   PmenuExtra = { fg = t.dim },
-  StatusLine = { fg = t.dim, bg = t.ground },
-  StatusLineNC = { fg = t.faint, bg = t.ground },
+  StatusLine = { fg = t.dim },
+  StatusLineNC = { fg = t.faint },
+  WinBar = { fg = t.text, bold = true },
+  WinBarNC = { fg = t.dim },
   TabLine = { fg = t.cyan, bg = t.surface },
   TabLineSel = { fg = t.ground, bg = t.cyan, bold = true },
-  TabLineFill = { bg = t.ground },
+  TabLineFill = {},
   Title = { fg = t.cyan, bold = true },
   Directory = { fg = t.cyan },
   ErrorMsg = { fg = t.red, bold = true },
@@ -174,8 +177,8 @@ local hl = {
   GitChange = { fg = t.yellow },
   GitDelete = { fg = t.red },
 
-  NeoTreeNormal = { fg = t.text, bg = t.ground },
-  NeoTreeNormalNC = { fg = t.text, bg = t.ground },
+  NeoTreeNormal = { fg = t.text },
+  NeoTreeNormalNC = { fg = t.text },
   NeoTreeDirectoryIcon = { fg = t.cyan },
   NeoTreeDirectoryName = { fg = t.cyan },
   NeoTreeRootName = { fg = t.green, bold = true },
