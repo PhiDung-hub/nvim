@@ -6,8 +6,9 @@ local icons = require("ui.icons")
 local M = {}
 local ns = vim.api.nvim_create_namespace("git.scm")
 local diff = require("git.diff")
-local S = { collapsed = {}, rows = {}, draft = "", gen = 0, quiet = 0, tree = false }
-local timer, ptimer = vim.uv.new_timer(), vim.uv.new_timer()
+local S = { collapsed = {}, rows = {}, draft = "", quiet = 0, tree = false, dirs = {} }
+local timer, ptimer, wtimer = vim.uv.new_timer(), vim.uv.new_timer(), vim.uv.new_timer()
+local MAX_DIRS = 64
 
 local SECTIONS = {
   { key = "conflicts", title = "Merge Changes" },
@@ -41,6 +42,8 @@ end
 local function data(list) return vim.tbl_map(function(k) return { k[1], k[3] } end, list) end
 
 local function fail(what, err) float(what .. " · failed", "✗ " .. what .. "\n\n" .. err) end
+
+local function paused() return S.err and (S.err:find("timed out", 1, true) or S.err:find("paused", 1, true)) end
 
 local function current_root()
   local file = vim.api.nvim_buf_get_name(0)
@@ -160,6 +163,7 @@ local function contents()
   end
   header(ctx)
   if not S.status then
+    if paused() then line(ctx, { { "○ status paused · slow repo", "AosRunning" } }) return ctx end
     line(ctx, { { S.err and "✗ " .. vim.trim(S.err):gsub("\n.*", "") or "◆ git status", S.err and "AosFailed" or "AosRunning" } })
     return ctx
   end
@@ -198,12 +202,24 @@ local function listed(key)
   end
 end
 
+-- The diff's file left its section (staged or reverted outside nvim): show where it went, else that it is clean.
+local function follow()
+  local path = diff.path()
+  if not path or not S.status then return end
+  for _, sec in ipairs(SECTIONS) do
+    for _, e in ipairs(S.status[sec.key]) do
+      if e.path == path then return diff.show(S.root, e, sec.key) end
+    end
+  end
+  diff.message("○ " .. path .. " · no changes")
+end
+
 local function preview(focus)
   if not visible() then return end
   local row = S.rows[vim.api.nvim_win_get_cursor(S.win)[1]]
   if row and row.entry then return diff.show(S.root, row.entry, row.section, { focus = focus }) end
   if listed(diff.key()) then return diff.reload() end
-  local msg = not S.root and "○ not a git repository" or not S.status and "◆ git status"
+  local msg = not S.root and "○ not a git repository" or not S.status and (paused() and "○ status paused · slow repo" or "◆ git status")
   diff.message(msg or has_changes(S.status) and "○ no file under the cursor" or "✓ working tree clean")
 end
 
@@ -219,9 +235,33 @@ local function landing(rows)
   return i or from.lnum and math.min(from.lnum, #rows) or first_file(rows), want and want.focus and i
 end
 
+-- Cuts `text` to `max` display cells, ending in …; returns the new text.
+local function clip(text, max)
+  if vim.fn.strdisplaywidth(text) <= max then return text end
+  local n = vim.fn.strchars(text)
+  while n > 0 and vim.fn.strdisplaywidth(vim.fn.strcharpart(text, 0, n)) > max - 1 do n = n - 1 end
+  return vim.fn.strcharpart(text, 0, n) .. "…"
+end
+
+-- Long rows end in … before their right-aligned letter or count instead of running under it.
+local function fit(ctx)
+  local width = vim.api.nvim_win_get_width(S.win)
+  for l, text in ipairs(ctx.lines) do
+    local r = ctx.right[l]
+    local cut = clip(text, width - (r and vim.fn.strdisplaywidth(r[1]) + 2 or 0))
+    if cut ~= text then ctx.lines[l], ctx.cut[l] = cut, #cut - #"…" end
+  end
+  for _, h in ipairs(ctx.hls) do
+    local limit = ctx.cut[h[1] + 1]
+    if limit then h[2], h[3] = math.min(h[2], limit), math.min(h[3], limit) end
+  end
+end
+
 local function render()
   if not visible() then return end
   local ctx = contents()
+  ctx.cut = {}
+  fit(ctx)
   vim.bo[S.buf].modifiable = true
   vim.api.nvim_buf_set_lines(S.buf, 0, -1, false, ctx.lines)
   vim.bo[S.buf].modifiable = false
@@ -232,25 +272,31 @@ local function render()
   S.rows = ctx.rows
   vim.api.nvim_win_set_cursor(S.win, { target, 0 })
   if focus or not vim.tbl_contains(diff.wins(), vim.api.nvim_get_current_win()) then return preview(focus) end
-  if listed(diff.key()) then diff.reload() end
+  if listed(diff.key()) then return diff.reload() end
+  follow()
 end
 
 -- Refresh and watchers ---------------------------------------------------------------------
 
+local watch_dirs
+
+-- One status run at a time: a refresh asked for meanwhile runs once when it is back.
 local function refresh()
   if not visible() then return end
   local root = S.root
   if not root then return render() end
-  S.gen = S.gen + 1
-  local gen = S.gen
-  S.inflight = true
+  if S.inflight then S.again = true return end
+  S.inflight, S.again = true, false
   repo.status(root, function(s, err)
     S.inflight, S.quiet = false, vim.uv.now() + 300
-    if gen ~= S.gen or root ~= S.root then return end
+    if S.again or root ~= S.root then return refresh() end
     S.status, S.err = s, err
     render()
+    watch_dirs()
   end)
 end
+
+M.refresh = refresh
 
 local function schedule()
   if not visible() then return end
@@ -264,9 +310,48 @@ local function on_git_event()
   schedule()
 end
 
+-- Agents write outside nvim: a change in the root or a listed file's directory refreshes within ~1 s, at most once a second.
+local function on_tree_event()
+  if not visible() or wtimer:is_active() then return end
+  wtimer:start(1000, 0, vim.schedule_wrap(refresh))
+end
+
+local function dir_watch(dir)
+  local w = vim.uv.new_fs_event()
+  local ok = w and w:start(dir, {}, function(err, name)
+    if not err and name ~= ".git" then vim.schedule(on_tree_event) end
+  end)
+  if ok then return w end
+  if w then w:close() end
+end
+
+local function close_dirs(keep)
+  for dir, w in pairs(S.dirs) do
+    if not (keep and keep[dir]) then
+      if not w:is_closing() then w:close() end
+      S.dirs[dir] = nil
+    end
+  end
+end
+
+watch_dirs = function()
+  if not (S.root and S.status and visible()) then return end
+  local want = { [S.root] = true }
+  for _, sec in ipairs(SECTIONS) do
+    for _, e in ipairs(S.status[sec.key]) do want[vim.fs.dirname(S.root .. "/" .. e.path)] = true end
+  end
+  close_dirs(want)
+  local n = vim.tbl_count(S.dirs)
+  for dir in pairs(want) do
+    if not S.dirs[dir] and n < MAX_DIRS then S.dirs[dir], n = dir_watch(dir), n + 1 end
+  end
+end
+
 local function unwatch()
   if S.watcher and not S.watcher:is_closing() then S.watcher:close() end
   S.watcher = nil
+  close_dirs()
+  wtimer:stop()
 end
 
 local function watch(root)
@@ -278,7 +363,7 @@ local function watch(root)
       if err or (name or ""):match("%.lock$") then return end
       vim.schedule(on_git_event)
     end)
-  end)
+  end, { feature = "status" })
 end
 
 local function set_root(root)
@@ -294,7 +379,7 @@ local function run(args, what, done)
     if not ok then fail(what, err ~= "" and err or out) end
     if done and ok then done(out) end
     refresh()
-  end)
+  end, { feature = "scm" })
 end
 
 local function paths(entries, with_orig)
@@ -424,7 +509,7 @@ local function remote(verb, label)
     if ok then notify("✓ git " .. verb .. (last ~= "" and " · " .. vim.trim(last) or "")) end
     if not ok then fail("git " .. verb, err ~= "" and err or out) end
     refresh()
-  end)
+  end, { feature = verb })
 end
 
 -- Commit -------------------------------------------------------------------------------------
@@ -437,14 +522,14 @@ local function do_commit(root, msg, amend, done)
     notify("✓ " .. vim.split(vim.trim(out), "\n")[1])
     done()
     refresh()
-  end, { stdin = msg })
+  end, { stdin = msg, feature = "commit" })
 end
 
 local function stage_all_and_commit(root, msg, done)
   repo.run({ "add", "-A" }, root, function(ok, _, err)
     if not ok then return fail("git add -A", err) end
     do_commit(root, msg, false, done)
-  end)
+  end, { feature = "commit" })
 end
 
 -- VS Code's smart commit: with nothing staged, offer to stage everything first.
@@ -508,7 +593,7 @@ function M.commit(amend)
   repo.run({ "log", "-1", "--format=%B" }, root, function(ok, out)
     if not ok then return notify("○ nothing to amend: no commits yet") end
     editor(root, true, vim.trim(out))
-  end)
+  end, { feature = "commit" })
 end
 
 -- Popup ------------------------------------------------------------------------------------
@@ -547,11 +632,18 @@ local function toggle_fold(row)
   render()
 end
 
+local function merge(e)
+  local root = S.root
+  M.close()
+  require("git.merge").open({ root = root, path = e.path, back = function() M.open({ root = root }) end })
+end
+
 local function activate()
   local row = row_at()
   if not row then return end
   if row.kind == "message" then return M.commit(false) end
   if row.key then return toggle_fold(row) end
+  if row.section == "conflicts" then return merge(row.entry) end
   if row.entry then diff.show(S.root, row.entry, row.section, { focus = true }) end
 end
 
@@ -577,8 +669,8 @@ end
 local help
 
 local KEYS = {
-  { "<CR>", activate, "diff (focus it) · fold section · edit message" },
-  { "o", activate, "diff (focus it)" },
+  { "<CR>", activate, "diff (focus it) · merge editor on a conflict · fold section · edit message" },
+  { "o", activate, "diff (focus it) · merge editor on a conflict" },
   { "O", function() local r = row_at() if r and r.entry then open_file(r.entry) end end, "open file (closes the popup)" },
   { "<Tab>", tab, "fold section or folder · else focus the diff" },
   { "za", function() local r = row_at() if r and r.key then toggle_fold(r) end end, "fold / unfold section or folder" },
@@ -609,7 +701,7 @@ M.keys = {
 
 help = function()
   local lines = {}
-  for _, sec in ipairs({ M.keys[1], diff.keys[1], M.keys[2], M.keys[3] }) do
+  for _, sec in ipairs({ M.keys[1], diff.keys[1], require("git.merge").keys[1], M.keys[2], M.keys[3] }) do
     lines[#lines + 1] = "❯ " .. sec.section
     for _, k in ipairs(sec.keys) do lines[#lines + 1] = ("  %-11s %s"):format(k[1], k[2]) end
   end
@@ -735,8 +827,8 @@ local function passthrough(args)
     repo.run({ "rev-parse", "--show-toplevel" }, root, function(found, top)
       if found then set_root(vim.trim(top)) end
       refresh()
-    end)
-  end)
+    end, { feature = "status" })
+  end, { feature = "git " .. args[1] })
 end
 
 local function is_popup(w)
@@ -767,6 +859,7 @@ function M.setup()
       local list, rect = rects()
       vim.api.nvim_win_set_config(S.win, list)
       diff.resize(rect)
+      render()
     end,
   })
   vim.api.nvim_create_autocmd("WinClosed", {

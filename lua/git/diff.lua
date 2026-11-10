@@ -11,6 +11,11 @@ local D = { wins = {}, scratch = {}, mapped = {}, gen = 0 }
 
 local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, { title = "git" }) end
 
+-- `git show rev:path` under a feature name; cb(text|nil, timed_out).
+local function show(root, rev, path, feature, cb)
+  repo.run({ "show", rev .. ":" .. path }, root, function(ok, out, _, slow) cb(ok and out or nil, slow) end, { feature = feature })
+end
+
 local function split(text)
   local lines = vim.split(text, "\n", { plain = true })
   local eol = lines[#lines] == ""
@@ -154,18 +159,22 @@ local function set_buf(w, buf)
   vim.api.nvim_win_set_buf(w, buf)
 end
 
+-- A rename titles the left (old) side with the old path and the right with the new one.
 local function titles(t, single)
-  local path = t.message and "" or t.path .. " "
+  local renamed = not t.message and t.old_path and t.old_path ~= t.path
+  local path = t.message and "" or (single and renamed and t.old_path .. " → " or "") .. t.path .. " "
+  if renamed and not single then path = t.old_path .. " " end
   local head = { { " ❯ ", "AosPrompt" }, { t.plain and not t.message and "merge " or "diff ", "AosArg" }, { path, "FloatTitle" } }
   local footer = t.staged and " u unstage hunk · ]c [c · ⇥ list · q close " or " s stage hunk · x revert hunk · ]c [c · ⇥ list · q close "
-  if t.plain then footer = " ⇥ list · q close " end
+  if t.plain then footer = t.message and " ⇥ list · q close " or " co ct cb accept · ]x [x conflict · ⇥ list · q close " end
   local new = D.wins.new
   if single then
     if not t.plain then vim.list_extend(head, { { t.old_label .. " ", "AosSha" }, { "↔ ", "AosFaint" }, { t.new_label .. " ", "AosDone" } }) end
     return vim.api.nvim_win_set_config(new, { title = head, title_pos = "left", footer = { { footer, "AosFaint" } }, footer_pos = "right" })
   end
   vim.api.nvim_win_set_config(D.wins.old, { title = vim.list_extend(head, { { t.old_label .. " ", "AosSha" } }), title_pos = "left" })
-  vim.api.nvim_win_set_config(new, { title = { { " ↔ ", "AosFaint" }, { t.new_label .. " ", "AosDone" } }, title_pos = "left", footer = { { footer, "AosFaint" } }, footer_pos = "right" })
+  local right = { { " ↔ ", "AosFaint" }, { renamed and t.path .. " " or "", "FloatTitle" }, { t.new_label .. " ", "AosDone" } }
+  vim.api.nvim_win_set_config(new, { title = right, title_pos = "left", footer = { { footer, "AosFaint" } }, footer_pos = "right" })
 end
 
 local function diff_mode(single)
@@ -225,12 +234,13 @@ local function stage_hunk()
   local t = D.t
   if D.applying then return end
   if t.staged then return notify("○ staged diff: u unstages a hunk") end
-  if t.plain then return notify("○ merge conflict: resolve it, then s in the list marks it resolved") end
+  if t.plain then return notify("○ merge conflict: ⏎ in the list opens the merge editor") end
   if not t.real or t.entry.letter == "U" then return stage_file(t) end
   if vim.bo[t.real].modified then vim.api.nvim_buf_call(t.real, function() vim.cmd("silent write") end) end
   local disk, lnum = table.concat(vim.fn.readfile(vim.api.nvim_buf_get_name(t.real), "b"), "\n"), cursor()
   D.applying = true
-  repo.show(t.root, "", t.path, function(index)
+  show(t.root, "", t.path, "stage", function(index, slow)
+    if slow then return apply_failed("stage paused · slow repo") end
     apply(t.root, patch(t.path, index or "", disk, lnum), { "-" })
   end)
 end
@@ -241,23 +251,49 @@ local function unstage_hunk()
   if not t.staged then return notify("○ only a staged diff unstages hunks") end
   local lnum = cursor()
   D.applying = true
-  repo.show(t.root, "HEAD", t.old_path, function(head)
-    repo.show(t.root, "", t.path, function(index)
+  show(t.root, "HEAD", t.old_path, "stage", function(head, slow)
+    if slow then return apply_failed("unstage paused · slow repo") end
+    show(t.root, "", t.path, "stage", function(index, slow2)
+      if slow2 then return apply_failed("unstage paused · slow repo") end
       apply(t.root, patch(t.path, head or "", index or "", lnum, true), { "-R", "-" })
     end)
   end)
 end
 
-local function revert_hunk()
-  local t = D.t
-  if t.plain or t.staged or not t.real or t.entry.letter == "U" then return notify("○ nothing to revert here: x in the list discards the file") end
-  local h = hunk_at(t.old, buf_text(t.real), cursor())
-  if not h then return notify("○ no change under the cursor") end
+-- The hunk's old side and where it lands, to tell whether a fresh index still yields the same revert.
+local function old_side(old, new, lnum)
+  local h = hunk_at(old, new, lnum)
+  return h and { h[3], h[4], vim.list_slice(split(old), h[1], h[1] + h[2] - 1) }
+end
+
+local function write_revert(t, index, lnum)
+  local h = hunk_at(index, buf_text(t.real), lnum)
   local as, ac, bs, bc = unpack(h)
   local start = bc == 0 and bs or bs - 1
-  vim.api.nvim_buf_set_lines(t.real, start, start + bc, false, vim.list_slice(split(t.old), as, as + ac - 1))
+  vim.api.nvim_buf_set_lines(t.real, start, start + bc, false, vim.list_slice(split(index), as, as + ac - 1))
   vim.api.nvim_buf_call(t.real, function() vim.cmd("silent write") end)
   after_apply()
+end
+
+-- The index is read again first: a hunk that changed since the diff was drawn is refused, not reverted stale.
+local function revert_hunk()
+  local t = D.t
+  if D.applying then return end
+  if t.plain or t.staged or not t.real or t.entry.letter == "U" then return notify("○ nothing to revert here: x in the list discards the file") end
+  local lnum, tick = cursor(), vim.b[t.real].changedtick
+  local want = old_side(t.old, buf_text(t.real), lnum)
+  if not want then return notify("○ no change under the cursor") end
+  D.applying = true
+  show(t.root, "", t.path, "stage", function(index, slow)
+    if slow then return apply_failed("revert paused · slow repo") end
+    if D.t ~= t or vim.b[t.real].changedtick ~= tick then return apply_failed("buffer changed · revert again") end
+    if not vim.deep_equal(old_side(index or "", buf_text(t.real), lnum), want) then
+      apply_failed("hunk changed in the index · reloaded, nothing reverted")
+      return M.reload()
+    end
+    D.applying = false
+    write_revert(t, index or "", lnum)
+  end)
 end
 
 local function jump(dir)
@@ -350,7 +386,11 @@ local function render(t, focus, keep)
   if prev and prev.real and prev.real ~= t.real then release(prev) end
   for _, b in pairs({ D.scratch.old, D.scratch.new, t.real }) do map(b, b == t.real) end
   diff_mode(t.inline)
-  vim.wo[D.wins.new].number = not t.message
+  -- An empty side (added or deleted file) is all filler in diff mode; its lone empty line gets no number or cursorline.
+  local old_shown = not t.inline and t.old ~= ""
+  if not t.inline then vim.wo[D.wins.old].number, vim.wo[D.wins.old].cursorline = old_shown, old_shown end
+  local new_shown = not t.message and (t.real ~= nil or t.new ~= "")
+  vim.wo[D.wins.new].number, vim.wo[D.wins.new].cursorline = new_shown, new_shown
   titles(t, t.inline)
   if not keep then first_change(t) end
   if focus then vim.api.nvim_set_current_win(D.wins.new) end
@@ -375,10 +415,13 @@ local function load(t, done)
     if gen == D.gen and D.rect then done() end
   end
   if t.plain then return finish() end
-  repo.show(t.root, t.staged and "HEAD" or "", t.old_path, function(old)
+  local function slow() return gen == D.gen and D.rect and M.message("○ diff paused · slow repo") end
+  show(t.root, t.staged and "HEAD" or "", t.old_path, "diff", function(old, cut)
+    if cut then return slow() end
     t.old = old or ""
     if not t.staged then return finish() end
-    repo.show(t.root, "", t.path, function(new)
+    show(t.root, "", t.path, "diff", function(new, cut2)
+      if cut2 then return slow() end
       t.new = new or ""
       finish()
     end)
@@ -400,7 +443,10 @@ function M.show(root, e, section, opts)
   if not D.rect then return end
   local t = content(root, e, section)
   local keep = D.t and D.t.key == t.key
+  -- A reload before this one lands must load it, not the file still on screen.
+  D.want = { root = root, entry = e, section = section, opts = opts, key = t.key }
   load(t, function()
+    D.want = nil
     local w = D.wins.new and vim.api.nvim_win_is_valid(D.wins.new) and D.wins.new
     if keep and w and vim.api.nvim_get_current_win() == w then keep = vim.api.nvim_win_get_cursor(w) end
     render(t, opts and opts.focus, keep)
@@ -410,16 +456,18 @@ end
 
 function M.message(text)
   if not D.rect then return end
-  D.gen = D.gen + 1
+  D.gen, D.want = D.gen + 1, nil
   render({ plain = true, message = true, new = text, path = "", key = "message:" .. text }, false, false)
 end
 
 function M.reload()
-  local t = D.t
-  if t and t.entry then M.show(t.root, t.entry, t.section) end
+  local t = D.want or D.t
+  if t and t.entry then M.show(t.root, t.entry, t.section, D.want and D.want.opts) end
 end
 
-function M.key() return D.t and D.t.key end
+function M.key() return (D.want or D.t or {}).key end
+
+function M.path() return (D.want or D.t or {}).entry and (D.want or D.t).entry.path end
 
 function M.wins()
   local out = {}
@@ -443,7 +491,7 @@ function M.close()
     pcall(vim.api.nvim_buf_delete, b, { force = true })
   end
   if D.diffopt then vim.o.diffopt = D.diffopt end
-  D.t, D.rect, D.opts, D.scratch, D.diffopt, D.applying = nil, nil, nil, {}, nil, false
+  D.t, D.want, D.rect, D.opts, D.scratch, D.diffopt, D.applying = nil, nil, nil, nil, {}, nil, false
   D.gen = D.gen + 1
 end
 

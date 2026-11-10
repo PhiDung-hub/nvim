@@ -193,6 +193,15 @@ local hl = {
   GitBlameAge4 = { fg = blend(t.magenta, 0.32) },
   -- git.scm
   AosScmDeleted = { fg = t.red, strikethrough = true },
+  -- git.merge: current green, incoming blue, base magenta; marker rows stronger, actions cyan
+  AosMergeCurrent = { bg = blend(t.green, 0.10) },
+  AosMergeCurrentHead = { bg = blend(t.green, 0.22), bold = true },
+  AosMergeIncoming = { bg = blend(t.blue, 0.10) },
+  AosMergeIncomingHead = { bg = blend(t.blue, 0.22), bold = true },
+  AosMergeBase = { bg = blend(t.magenta, 0.08) },
+  AosMergeBaseHead = { bg = blend(t.magenta, 0.18), bold = true },
+  AosMergeSep = { fg = t.dim, bg = blend(t.faint, 0.15) },
+  AosMergeAction = { fg = t.cyan },
   -- lua/git/graph.lua: lane colours cycle, HEAD node, faint sha column.
   AosGraphLane1 = { fg = t.blue },
   AosGraphLane2 = { fg = t.magenta },
