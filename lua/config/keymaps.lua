@@ -1,53 +1,49 @@
 local map = vim.keymap.set
+local tabline = require("ui.tabline")
+local pick = require("ui.pick")
 
--- Exit terminal mode
 map("t", "<Esc><leader>", "<C-\\><C-n>", { nowait = true })
-
--- Visual block mode
 map("n", "q", "<C-v>")
-
--- Tab
-map("i", "<S-tab>", "<C-d>")
-
--- Go to start and end of line in insert mode
+map("i", "<S-Tab>", "<C-d>")
 map("i", "<C-Down>", "<Home>")
 map("i", "<C-Up>", "<End>")
-
--- Window and file management
-map("n", "<C-a>", "gg<S-v>G") -- select all
-map("n", "<F3>", "gg=G<C-o>") -- reformat entire file
-
--- Split window vertical
-map("n", "sv", ":vsplit<CR><C-w>w")
-
--- Move window
+map("n", "<C-a>", "gg<S-v>G")
+map("n", "<F3>", "gg=G<C-o>")
+map("n", "sv", "<cmd>vsplit<cr><C-w>w")
 map("n", "zh", "<C-w>h")
 map("n", "zk", "<C-w>k")
 map("n", "zj", "<C-w>j")
 map("n", "zl", "<C-w>l")
-
--- Copy to system clipboard
-map("n", "<C-c>", '"+y')
-map("v", "<C-c>", '"+y')
-
--- Deletion (C-H == C-BS)
+map({ "n", "v" }, "<C-c>", '"+y')
 map("i", "<C-H>", "<C-w>")
-
--- Undo / Redo
 map("i", "<C-Z>", "<C-O>u")
 map("n", "<C-Z>", "u")
 map("i", "<C-Y>", "<C-O><C-R>")
+map("i", "<C-S>", "<Esc><cmd>w<cr>a")
+map("v", "<C-S>", "<Esc><cmd>w<cr>gv")
+map("n", "<C-S>", "<cmd>w<cr>")
+map("n", "<C-m-k>", "<cmd>m .-2<cr>==")
+map("n", "<C-m-j>", "<cmd>m .+1<cr>==")
+map("v", "<C-m-j>", ":m '>+1<cr>gv=gv")
+map("v", "<C-m-k>", ":m '<-2<cr>gv=gv")
 
--- Save
-map("i", "<C-S>", "<ESC>:w<CR>a")
-map("v", "<C-S>", "<ESC>:w<CR>gv")
-map("n", "<C-S>", ":w<CR>")
+-- Buffers (tabline)
+map("n", "<Tab>", "<cmd>bnext<cr>", { desc = "Next buffer" })
+map("n", "<S-Tab>", "<cmd>bprevious<cr>", { desc = "Prev buffer" })
+for i = 1, 5 do map("n", "<leader>" .. i, function() tabline.go(i) end, { desc = "Buffer " .. i }) end
+map("n", "<leader>0", function() tabline.go(-1) end, { desc = "Last buffer" })
+map("n", "<C-Q>", "<cmd>bdelete!<cr>", { desc = "Close buffer" })
+map("n", "db", "<cmd>bdelete<cr>", { desc = "Close buffer" })
+map("n", "dlb", function() tabline.close_side("left") end, { desc = "Close left buffers" })
+map("n", "drb", function() tabline.close_side("right") end, { desc = "Close right buffers" })
 
--- Move lines up and down
-map("n", "<C-m-k>", ":m .-2<CR>==")
-map("v", "<C-m-j>", ":m '>+1<CR>gv=gv")
-map("v", "<C-m-k>", ":m '<-2<CR>gv=gv")
-map("n", "<C-m-j>", ":m .+1<CR>==")
+-- Pickers
+map("n", "\\\\", pick.buffers, { desc = "Buffers" })
+map("n", ";t", pick.help, { desc = "Help tags" })
+map("n", ";e", pick.diagnostics, { desc = "Diagnostics" })
 
--- Markdown inline render toggle (<leader>p) is defined in the
--- render-markdown.nvim spec, scoped to markdown buffers.
+-- Tools
+map({ "n", "t" }, "<m-->", require("ui.term").toggle, { desc = "Terminal" })
+map("n", "<leader>f", function() require("core.format").format() end, { desc = "Format buffer" })
+map("n", "<leader>qs", function() _G.AosSession(false) end, { desc = "Restore session" })
+map("n", "<leader>ql", function() _G.AosSession(true) end, { desc = "Restore last session" })
