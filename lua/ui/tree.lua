@@ -5,7 +5,7 @@ local ns = api.nvim_create_namespace("ui.tree")
 local LIMIT, BUDGET, GIT_DELAY = 2000, 3000, 300
 local S = { nodes = {}, rows = {}, lines = {}, index = {}, watchers = {}, gitpaths = {}, width = 32, epoch = 0 }
 local git, diagnostics, modified = {}, {}, {}
-local render, scan, watch, refresh_git
+local render, scan, watch, refresh_git, forget, save_session
 local LETTER = { M = "AosRunning", T = "AosRunning", A = "AosDone", U = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", ["!"] = "AosFailed" }
 
 local function visible() return S.win and api.nvim_win_is_valid(S.win) and api.nvim_win_get_buf(S.win) == S.buf end
@@ -51,7 +51,14 @@ end
 
 local function new_node(path, kind)
   local node = S.nodes[path]
-  if node then node.dir = kind == "directory" return node end
+  if node then
+    if kind ~= "link" and node.dir ~= (kind == "directory") then
+      forget(node)
+      node.dir, node.children, node.loaded, node.expanded = kind == "directory", nil, nil, nil
+      S.nodes[path] = node
+    end
+    return node
+  end
   node = { path = path, name = vim.fs.basename(path), dir = kind == "directory" }
   S.nodes[path] = node
   return node
@@ -68,7 +75,7 @@ local function children(node)
     if not seen[child.path] and not hidden(child) then result[#result + 1] = child end
   end
   table.sort(result, function(a, b)
-    if a.dir ~= b.dir then return a.dir end
+    if not not a.dir ~= not not b.dir then return not not a.dir end
     return a.name < b.name
   end)
   return result
@@ -103,6 +110,7 @@ local function apply(rows, lines, index)
   if S.repaint then api.nvim__redraw({ buf = S.buf, valid = false, flush = true })
   else vim.cmd.redraw() end
   S.repaint = nil
+  save_session()
 end
 
 local function push(stack, node, prefix)
@@ -112,7 +120,7 @@ local function push(stack, node, prefix)
 end
 
 local function build(version)
-  if not visible() then return end
+  if not visible() or S.revealing then return end
   local rows, lines, index, stack = {}, {}, {}, {}
   local deadline = uv.hrtime() + BUDGET * 1000000
   local root = S.nodes[S.root]
@@ -153,6 +161,7 @@ end
 render = function(repaint)
   S.repaint = S.repaint or repaint
   S.version = (S.version or 0) + 1
+  if S.revealing then return end
   local version = S.version
   vim.schedule(function() if version == S.version then build(version) end end)
 end
@@ -164,8 +173,11 @@ local function badges(node)
   if modified[node.path] then chunks[#chunks + 1] = { "● ", "AosArg" } end
   if d and d.errors > 0 then chunks[#chunks + 1] = { "✗" .. d.errors .. " ", "AosFailed" } end
   if d and d.warnings > 0 then chunks[#chunks + 1] = { "!" .. d.warnings .. " ", "AosRunning" } end
-  local status = g and (node.dir and g.dirs[node.path] or g.files[node.path])
-  if node.dir and status then return vim.list_extend(chunks, { { "· ", "AosTree" .. status:gsub("!", "Conflict") } }) end
+  local status = g and g.files[node.path]
+  if node.dir then
+    local letter = g and g.dirs[node.path]
+    if letter then chunks[#chunks + 1] = { "· ", "AosTree" .. letter:gsub("!", "Conflict") } end
+  end
   if not status then return chunks end
   if status.staged then chunks[#chunks + 1] = { "✓" .. status.staged .. " ", LETTER[status.staged] } end
   if status.work then chunks[#chunks + 1] = { status.work .. " ", LETTER[status.work] } end
@@ -209,15 +221,45 @@ local function retire_branch(path)
   end
 end
 
+forget = function(node)
+  local stack = { node }
+  while #stack > 0 do
+    local current = table.remove(stack)
+    for _, child in ipairs(current.children or {}) do stack[#stack + 1] = child end
+    retire(current)
+    current.expanded = false
+    if S.nodes[current.path] == current then S.nodes[current.path] = nil end
+  end
+end
+
 local function resolve_link(node, epoch)
   uv.fs_stat(node.path, later(function(_, stat)
-    if epoch == S.epoch and stat and stat.type == "directory" then node.dir = true render() end
+    if epoch ~= S.epoch then return end
+    new_node(node.path, stat and stat.type or "file")
+    render()
   end))
+end
+
+local function target_child(node)
+  if not S.target or not within(S.target, node.path) or S.target == node.path then return end
+  local part = S.target:sub(#join(node.path, "") + 1):match("^[^/]+")
+  return part and S.nodes[join(node.path, part)]
 end
 
 local function prune()
   for _, node in pairs(S.nodes) do
     if not node.expanded or hidden(node) then retire(node) end
+  end
+end
+
+local function prune_listing(previous, result, node, complete, updated)
+  local keep = {}
+  for _, child in ipairs(result) do keep[child.path] = true end
+  if updated then keep[updated.path] = true end
+  for _, child in ipairs(previous) do
+    if not keep[child.path] and child ~= target_child(node) then
+      if complete then forget(child) elseif child.dir then retire_branch(child.path) end
+    end
   end
 end
 
@@ -227,13 +269,20 @@ scan = function(node, done)
     return
   end
   local previous = node.children or {}
+  local updated
   local epoch, result, total, finished, dir, reading = S.epoch, {}, 0, false, nil, false
   local timer = uv.new_timer()
   node.loading, node.waiters = true, done and { done } or {}
   -- libuv owns the directory until an in-flight readdir callback returns.
   local function close_dir() if dir and not reading then uv.fs_closedir(dir, function() end) dir = nil end end
   local function publish()
-    node.children, node.loaded = result, true
+    local view, seen = {}, {}
+    for _, child in ipairs(result) do view[#view + 1], seen[child.path] = child, true end
+    local target = target_child(node)
+    if target and not seen[target.path] then view[#view + 1], seen[target.path] = target, true end
+    if updated and not seen[updated.path] then view[#view + 1] = updated end
+    node.children, node.loaded, node.total = view, true, total
+    node.notice = total > #view and ("… %d more · listing capped at %d"):format(total - #view, LIMIT) or nil
     render()
   end
   local function finish(err, cancelled)
@@ -245,15 +294,9 @@ scan = function(node, done)
     local waiters = node.waiters
     node.waiters = nil
     if epoch ~= S.epoch or cancelled then return end
-    if not err then
-      local keep = {}
-      for _, child in ipairs(result) do keep[child.path] = true end
-      for _, child in ipairs(previous) do
-        if child.dir and not keep[child.path] then retire_branch(child.path) end
-      end
-    end
-    node.notice = err or (total > LIMIT and ("… %d more · listing capped at %d"):format(total - LIMIT, LIMIT) or nil)
+    if not err then prune_listing(previous, result, node, total <= LIMIT, updated) end
     publish()
+    if err then node.notice = err end
     for _, cb in ipairs(waiters) do cb() end
   end
   node.cancel = function() finish(nil, true) end
@@ -265,13 +308,25 @@ scan = function(node, done)
     uv.fs_readdir(dir, later(function(err, entries)
       reading = false
       if finished then close_dir() return end
-      if err or not entries then return finish(err and ("… " .. err) or nil) end
+      if err then return finish("… " .. err) end
+      if not entries then
+        local target = target_child(node)
+        if not target then return finish() end
+        return uv.fs_stat(target.path, later(function(staterr)
+          if finished then return end
+          if staterr then forget(target) end
+          finish()
+        end))
+      end
       for _, entry in ipairs(entries) do
         total = total + 1
         if #result < LIMIT then
           local child = new_node(join(node.path, entry.name), entry.type)
           result[#result + 1] = child
           if entry.type == "link" then resolve_link(child, epoch) end
+        elseif join(node.path, entry.name) == node.changed then
+          updated = new_node(node.changed, entry.type)
+          if entry.type == "link" then resolve_link(updated, epoch) end
         end
       end
       if total == #entries then publish() end
@@ -284,27 +339,60 @@ scan = function(node, done)
     dir = handle
     read()
   end), 128)
-  watch(node.path, false)
+  if node.expanded then watch(node.path, false) end
 end
 
-local function aggregate(g, entries, staged)
-  for _, entry in ipairs(entries) do
-    local path = join(g.root, entry.path)
-    local status = g.files[path] or {}
-    status[staged and "staged" or "work"] = entry.letter
-    g.files[path] = status
-    local dir = vim.fs.dirname(path)
-    while within(dir, g.root) do
-      if entry.letter == "!" or not g.dirs[dir] then g.dirs[dir] = entry.letter end
-      if dir == g.root then break end
-      dir = vim.fs.dirname(dir)
-    end
-    if entry.letter == "D" then
-      local parent = vim.fs.dirname(path)
-      g.deleted[parent] = g.deleted[parent] or {}
-      g.deleted[parent][#g.deleted[parent] + 1] = { path = path, name = vim.fs.basename(path), deleted = true }
-    end
+local function refresh_loaded()
+  for _, node in pairs(S.nodes) do
+    if node.dir and node.loaded and not node.expanded and not hidden(node) then scan(node) end
   end
+end
+
+local function consume(step, done)
+  local deadline = uv.hrtime() + BUDGET * 1000000
+  local function batch()
+    local start = uv.hrtime()
+    while uv.hrtime() - start < 2000000 do
+      if not step() then return done() end
+    end
+    if uv.hrtime() > deadline then return done("tree metadata cut off after 3 s") end
+    vim.defer_fn(batch, 1)
+  end
+  batch()
+end
+
+local function aggregate(g, entry, staged)
+  local path = join(g.root, entry.path)
+  local status = g.files[path] or {}
+  status[staged and "staged" or "work"] = entry.letter
+  g.files[path] = status
+  local dir = vim.fs.dirname(path)
+  while within(dir, g.root) do
+    if g.dirs[dir] and (entry.letter ~= "!" or g.dirs[dir] == "!") then break end
+    g.dirs[dir] = entry.letter
+    if dir == g.root then break end
+    dir = vim.fs.dirname(dir)
+  end
+  if entry.letter == "D" then
+    local parent = vim.fs.dirname(path)
+    g.deleted[parent] = g.deleted[parent] or {}
+    g.deleted[parent][#g.deleted[parent] + 1] = { path = path, name = vim.fs.basename(path), dir = false, deleted = true }
+  end
+end
+
+local function status_index(g, status, done)
+  local result = { root = g.root, files = {}, dirs = {}, deleted = {} }
+  local groups, group, index = { status.staged, status.changes, status.conflicts }, 1, 1
+  consume(function()
+    while group <= #groups and not groups[group][index] do group, index = group + 1, 1 end
+    if group > #groups then return false end
+    aggregate(result, groups[group][index], group == 1)
+    index = index + 1
+    return true
+  end, function(err)
+    if not err then g.files, g.dirs, g.deleted = result.files, result.dirs, result.deleted end
+    done(err)
+  end)
 end
 
 refresh_git = function()
@@ -321,30 +409,34 @@ refresh_git = function()
     g.notice = g.status_notice or g.ignore_notice
     prune()
     render(true)
+    if S.query then refresh_loaded() end
     if g.again then debounce("git_timer", GIT_DELAY, refresh_git) end
   end
   repo.status(g.root, function(status, err)
     g.status_notice = nil
     if not status then g.status_notice = "git status cut off/unavailable · " .. (err or "unknown error") end
-    if status then
-      g.files, g.dirs, g.deleted = {}, {}, {}
-      aggregate(g, status.staged, true)
-      aggregate(g, status.changes, false)
-      aggregate(g, status.conflicts, false)
-    end
-    finish()
+    if not status then return finish() end
+    status_index(g, status, function(indexerr)
+      g.status_notice = indexerr
+      finish()
+    end)
   end)
   repo.run({ "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory" }, g.root, function(ok, out, err)
     g.ignore_notice = nil
-    if ok then
-      g.ignored, g.ignore_dirs = {}, {}
-      for path in out:gmatch("([^%z]+)%z") do
-        local target = path:sub(-1) == "/" and g.ignore_dirs or g.ignored
-        target[join(g.root, path:gsub("/$", ""))] = true
-      end
-    else g.ignore_notice = "gitignore cut off/unavailable · " .. err end
-    finish()
-  end, { feature = "tree ignore" })
+    if not ok then g.ignore_notice = "gitignore cut off/unavailable · " .. err finish() return end
+    local ignored, dirs, paths = {}, {}, out:gmatch("([^%z]+)%z")
+    consume(function()
+      local path = paths()
+      if not path then return false end
+      local target = path:sub(-1) == "/" and dirs or ignored
+      target[join(g.root, path:gsub("/$", ""))] = true
+      return true
+    end, function(parseerr)
+      if not parseerr then g.ignored, g.ignore_dirs = ignored, dirs end
+      g.ignore_notice = parseerr
+      finish()
+    end)
+  end, { feature = "tree ignore", binary = true })
 end
 
 watch = function(path, gitdir)
@@ -355,7 +447,11 @@ watch = function(path, gitdir)
     if err then return end
     if gitdir and name and name:match("%.lock$") then return end
     S.dirty = S.dirty or {}
-    if not gitdir then S.dirty[path] = true end
+    if not gitdir then
+      S.dirty[path] = true
+      local node = S.nodes[path]
+      if node and name then node.changed = join(path, name) end
+    end
     vim.schedule(function()
       if epoch ~= S.epoch or not visible() then return end
       debounce("git_timer", GIT_DELAY, refresh_git)
@@ -386,6 +482,11 @@ local function locate()
     stop(S.git_timer)
     S.git_timer = nil
     refresh_git()
+    stop(S.poll_timer)
+    S.poll_timer = uv.new_timer()
+    S.poll_timer:start(400, 400, later(function()
+      if visible() and not S.git_timer and not git[top].busy then refresh_git() end
+    end))
   end, { feature = "tree lookup" })
 end
 
@@ -407,7 +508,7 @@ end
 
 local function collapse(node)
   if not node then return end
-  S.reveal, S.select = (S.reveal or 0) + 1, nil
+  S.reveal, S.select, S.revealing = (S.reveal or 0) + 1, nil, nil
   retire_branch(node.path)
   render()
 end
@@ -416,35 +517,58 @@ local function include(parent, child)
   parent.children = parent.children or {}
   for _, node in ipairs(parent.children) do if node.path == child.path then return end end
   parent.children[#parent.children + 1] = child
+  local omitted = (parent.total or 0) - #parent.children
+  parent.notice = omitted > 0 and ("… %d more · listing capped at %d"):format(omitted, LIMIT) or nil
 end
 
-function M.reveal(path)
+function M.reveal(path, done)
   if not visible() or not within(path, S.root) or path == S.root then return end
   S.target, S.reveal = path, (S.reveal or 0) + 1
   local serial, epoch = S.reveal, S.epoch
-  local relative = path:sub(#join(S.root, "") + 1)
-  local parts, at = vim.split(relative, "/", { plain = true }), 1
-  local function step(node)
-    if epoch ~= S.epoch or serial ~= S.reveal or not visible() then return end
-    if at > #parts then S.select = path render() return end
-    node.expanded = true
-    watch(node.path, false)
-    local function advance()
-      if epoch ~= S.epoch or serial ~= S.reveal then return end
-      local childpath = join(node.path, parts[at])
-      at = at + 1
-      local child = S.nodes[childpath]
-      if child then include(node, child) return step(child) end
-      uv.fs_stat(childpath, later(function(err, stat)
-        if err or epoch ~= S.epoch or serial ~= S.reveal then return end
-        child = new_node(childpath, stat.type)
-        include(node, child)
-        step(child)
-      end))
-    end
-    if node.loaded then advance() else scan(node, advance) end
+  S.revealing = serial
+  stop(S.reveal_timer)
+  local function valid() return epoch == S.epoch and serial == S.reveal and S.revealing == serial and visible() end
+  local function finish(node, expired)
+    if not valid() then return end
+    stop(S.reveal_timer)
+    S.reveal_timer, S.revealing = nil, nil
+    if expired then S.reveal = S.reveal + 1 end
+    if node then S.select = path end
+    render()
+    if done then done(node) end
   end
-  step(S.nodes[S.root])
+  S.reveal_timer = uv.new_timer()
+  S.reveal_timer:start(BUDGET, 0, later(function()
+    if not valid() then return end
+    S.notice = "… cut off · reveal took over 3 s"
+    finish(nil, true)
+  end))
+  uv.fs_stat(path, later(function(err, stat)
+    if not valid() then return end
+    if err then
+      local stale = S.nodes[path]
+      if stale then forget(stale) end
+      return finish()
+    end
+    local parts = vim.split(path:sub(#join(S.root, "") + 1), "/", { plain = true })
+    local node, at = S.nodes[S.root], 1
+    local function advance()
+      if not valid() then return end
+      local start = uv.hrtime()
+      while at <= #parts and uv.hrtime() - start < 2000000 do
+        local expanded = node.expanded
+        node.expanded = true
+        watch(node.path, false)
+        if not node.loaded or not expanded then scan(node) end
+        local child = new_node(join(node.path, parts[at]), at == #parts and stat.type or "directory")
+        include(node, child)
+        node, at = child, at + 1
+      end
+      if at <= #parts then return vim.defer_fn(advance, 1) end
+      finish(node)
+    end
+    advance()
+  end))
 end
 
 local function destination()
@@ -568,34 +692,52 @@ local function unused(path, cb)
   end))
 end
 
-local function buffer_destination(buf, name)
-  for _, existing in ipairs(api.nvim_list_bufs()) do
-    if existing ~= buf and api.nvim_buf_get_name(existing) == name then
-      if api.nvim_buf_is_loaded(existing) or vim.bo[existing].modified then
-        notify("destination buffer already exists: " .. name)
+local function buffer_destination(from, to)
+  for _, buf in ipairs(buffers_under(to)) do
+    if not within(api.nvim_buf_get_name(buf), from) then
+      if api.nvim_buf_is_loaded(buf) or vim.bo[buf].modified then
+        notify("destination buffer already exists: " .. api.nvim_buf_get_name(buf))
         return false
       end
-      api.nvim_buf_delete(existing, { force = false })
+      api.nvim_buf_delete(buf, { force = false })
     end
   end
   return true
 end
 
+local function rename_noreplace(from, to, cb)
+  local work
+  work = uv.new_work(function(source, destination)
+    local ok, err = pcall(function()
+      local ffi = require("ffi")
+      ffi.cdef("int renameat2(int, const char*, int, const char*, unsigned int); char *strerror(int);")
+      local AT_FDCWD, RENAME_NOREPLACE = -100, 1
+      local result = ffi.C.renameat2(AT_FDCWD, source, AT_FDCWD, destination, RENAME_NOREPLACE)
+      return result == 0 and "" or ffi.string(ffi.C.strerror(ffi.errno()))
+    end)
+    return ok and err or ("atomic no-replace rename unavailable: " .. tostring(err))
+  end, later(function(err)
+    work = nil
+    cb(err ~= "" and err or nil)
+  end))
+  local ok, err = work:queue(from, to)
+  if not ok then work = nil return cb(err or "could not queue atomic rename") end
+  vim.defer_fn(function() if work then notify("rename still running…") end end, BUDGET)
+end
+
 local function move(from, to)
   if within(to, from) then return notify("destination must be outside the source") end
-  for _, buf in ipairs(buffers_under(from)) do
-    if not buffer_destination(buf, to .. api.nvim_buf_get_name(buf):sub(#from + 1)) then return end
-  end
+  if not buffer_destination(from, to) then return end
   unused(to, function()
     mkdir(vim.fs.dirname(to), function(err)
       if err then return notify(err) end
-      uv.fs_rename(from, to, later(function(renameerr)
+      rename_noreplace(from, to, function(renameerr)
         if not renameerr then
           move_buffers(from, to)
           if S.clipboard and S.clipboard.cut and S.clipboard.path == from then S.clipboard = nil end
         end
         changed(renameerr, to)
-      end))
+      end)
     end)
   end)
 end
@@ -667,7 +809,8 @@ local function yank(absolute)
 end
 
 local function filter()
-  S.reveal, S.select = (S.reveal or 0) + 1, nil
+  refresh_loaded()
+  S.reveal, S.select, S.revealing = (S.reveal or 0) + 1, nil, nil
   local group = api.nvim_create_augroup("UiTreeFilter", {})
   api.nvim_create_autocmd("CmdlineChanged", { group = group, callback = function()
     local query = vim.fn.getcmdline()
@@ -704,7 +847,7 @@ M.keys = { { section = "File tree", keys = {
   { "H", "toggle gitignored", run = function() S.hidden = not S.hidden prune() M.refresh() render() end },
   { "R", "refresh", run = M.refresh },
   { "z", "collapse all", run = function()
-    S.reveal, S.select = (S.reveal or 0) + 1, nil
+    S.reveal, S.select, S.revealing = (S.reveal or 0) + 1, nil, nil
     for _, node in pairs(S.nodes) do
       if node.path ~= S.root then node.expanded = false retire(node) end
     end
@@ -740,6 +883,7 @@ end
 local function detach()
   local win = S.win
   S.win = nil
+  vim.g.AosTreeSession = ""
   if win and api.nvim_win_is_valid(win) then
     for name, value in pairs(S.options or {}) do vim.wo[win][name] = value end
   end
@@ -748,8 +892,8 @@ local function detach()
   S.version = (S.version or 0) + 1
   for _, node in pairs(S.nodes) do if node.cancel then node.cancel() end end
   for path in pairs(S.watchers) do unwatch(path) end
-  stop(S.watch_timer) stop(S.git_timer)
-  S.watch_timer, S.git_timer = nil, nil
+  stop(S.watch_timer) stop(S.git_timer) stop(S.poll_timer) stop(S.reveal_timer)
+  S.watch_timer, S.git_timer, S.poll_timer, S.reveal_timer, S.revealing = nil, nil, nil, nil, nil
 end
 
 function M.close()
@@ -784,7 +928,7 @@ function M.open(root, float, inplace)
     S.win = api.nvim_get_current_win()
     api.nvim_win_set_buf(S.win, S.buf)
   else
-    vim.cmd("topleft " .. math.min(S.width, math.max(12, vim.o.columns - 10)) .. "vnew")
+    vim.cmd("topleft " .. math.min(S.width, math.max(12, vim.o.columns - 10)) .. "vsplit")
     S.win = api.nvim_get_current_win()
     api.nvim_win_set_buf(S.win, S.buf)
   end
@@ -800,6 +944,48 @@ end
 function M.toggle(float)
   if visible() and api.nvim_win_get_tabpage(S.win) == api.nvim_get_current_tabpage() and S.float == (float == true) then return M.close() end
   M.open(nil, float)
+end
+
+save_session = function()
+  if not visible() then return end
+  local dirs = {}
+  for path, node in pairs(S.nodes) do if node.dir and node.expanded and path ~= S.root then dirs[#dirs + 1] = path end end
+  vim.g.AosTreeSession = vim.json.encode({ root = S.root, float = S.float, inplace = S.inplace,
+    width = (S.float or S.inplace) and S.width or api.nvim_win_get_width(S.win), dirs = dirs })
+end
+
+local function restore_session()
+  local value = vim.g.AosTreeSession
+  if type(value) ~= "string" or value == "" then S.session_loading = nil return end
+  local ok, data = pcall(vim.json.decode, value)
+  if not ok or type(data) ~= "table" or type(data.root) ~= "string" or data.root:sub(1, 1) ~= "/" then
+    S.session_loading = nil
+    return notify("invalid tree session")
+  end
+  S.session_loading = true
+  local origin, current = api.nvim_get_current_win(), S.current
+  local width = tonumber(data.width) or 32
+  S.width, S.current = math.max(12, math.min(width, math.max(12, vim.o.columns - 10))), nil
+  M.open(data.root, data.float == true, data.inplace == true)
+  S.current = current
+  local dirs = type(data.dirs) == "table" and data.dirs or {}
+  dirs = vim.tbl_filter(function(path) return type(path) == "string" and path ~= data.root and within(path, data.root) end, dirs)
+  table.sort(dirs)
+  local index, epoch = 0, S.epoch
+  local function advance()
+    if epoch ~= S.epoch then return end
+    index = index + 1
+    local path = dirs[index]
+    if not path then return end
+    M.reveal(path, function(node)
+      if not node or not node.dir then return advance() end
+      node.expanded = true
+      scan(node, advance)
+    end)
+  end
+  advance()
+  if not data.inplace and api.nvim_win_is_valid(origin) then api.nvim_set_current_win(origin) end
+  S.session_loading = nil
 end
 
 local function diagnostic(buf)
@@ -824,7 +1010,11 @@ end
 
 function M.setup()
   colors()
+  vim.opt.sessionoptions:append("globals")
   local group = api.nvim_create_augroup("UiTree", {})
+  api.nvim_create_autocmd("SessionLoadPre", { group = group, callback = function() S.session_loading = true end })
+  api.nvim_create_autocmd("SessionLoadPost", { group = group, callback = restore_session })
+  api.nvim_create_autocmd("WinResized", { group = group, callback = save_session })
   api.nvim_create_autocmd("ColorScheme", { group = group, callback = colors })
   api.nvim_create_autocmd("DiagnosticChanged", { group = group, callback = function(ev) diagnostic(ev.buf) end })
   api.nvim_create_autocmd({ "BufModifiedSet", "BufWritePost", "BufEnter" }, { group = group, callback = function(ev)
@@ -832,6 +1022,7 @@ function M.setup()
     local path = api.nvim_buf_get_name(ev.buf)
     modified[path] = vim.bo[ev.buf].modified or nil
     if ev.event == "BufEnter" and path ~= "" then
+      local follow = not S.session_loading
       uv.fs_stat(path, later(function(_, stat)
         if not api.nvim_buf_is_valid(ev.buf) or api.nvim_get_current_buf() ~= ev.buf then return end
         if stat and stat.type == "directory" then
@@ -841,7 +1032,7 @@ function M.setup()
           return
         end
         S.current = path
-        if visible() then S.origin = api.nvim_get_current_win() M.reveal(path) end
+        if visible() and follow and not S.session_loading then S.origin = api.nvim_get_current_win() M.reveal(path) end
       end))
     end
     if ev.event == "BufWritePost" and visible() then debounce("git_timer", GIT_DELAY, refresh_git) end

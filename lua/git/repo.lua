@@ -167,38 +167,56 @@ local xy_kind = { M = "modified", A = "added", D = "deleted", R = "renamed", C =
 -- Parses `git status --porcelain=v2 -z --branch --untracked-files=all`.
 -- Result: { branch, oid, upstream, ahead, behind, staged = {entry}, changes = {entry}, conflicts = {entry} }
 -- entry: { path, orig?, letter = "M"|"A"|"D"|"R"|"C"|"U"|"T", kind }
-local function parse_status(out)
-  local s = { ahead = 0, behind = 0, staged = {}, changes = {}, conflicts = {} }
-  local fields, i = vim.split(out, "\0", { plain = true }), 1
-  while i <= #fields do
-    local f = fields[i]
-    local head, val = f:match("^# branch%.(%S+) (.*)$")
-    if head == "head" then s.branch = val ~= "(detached)" and val or nil
-    elseif head == "oid" then s.oid = val
-    elseif head == "upstream" then s.upstream = val
-    elseif head == "ab" then s.ahead, s.behind = tonumber(val:match("%+(%d+)")), tonumber(val:match("%-(%d+)")) end
-    local kind = f:sub(1, 1)
-    if kind == "1" or kind == "2" then
-      local xy, path = f:match("^%d (..) %S+ %S+ %S+ %S+ %S+ %S+ " .. (kind == "2" and "%S+ " or "") .. "(.*)$")
-      local orig = kind == "2" and fields[i + 1] or nil
-      if kind == "2" then i = i + 1 end
-      local x, y = xy:sub(1, 1), xy:sub(2, 2)
-      if x ~= "." then table.insert(s.staged, { path = path, orig = orig, letter = x, kind = xy_kind[x] }) end
-      if y ~= "." then table.insert(s.changes, { path = path, letter = y, kind = xy_kind[y] }) end
-    elseif kind == "u" then
-      table.insert(s.conflicts, { path = f:match("^u %S+ %S+ %S+ %S+ %S+ %S+ %S+ %S+ %S+ (.*)$"), letter = "!", kind = "conflict" })
-    elseif kind == "?" then
-      table.insert(s.changes, { path = f:sub(3), letter = "U", kind = "untracked" })
-    end
-    i = i + 1
+local function status_record(s, f, field)
+  local head, val = f:match("^# branch%.(%S+) (.*)$")
+  if head == "head" then s.branch = val ~= "(detached)" and val or nil
+  elseif head == "oid" then s.oid = val
+  elseif head == "upstream" then s.upstream = val
+  elseif head == "ab" then s.ahead, s.behind = tonumber(val:match("%+(%d+)")), tonumber(val:match("%-(%d+)")) end
+  local kind = f:sub(1, 1)
+  if kind == "1" or kind == "2" then
+    local xy, path = f:match("^%d (..) %S+ %S+ %S+ %S+ %S+ %S+ " .. (kind == "2" and "%S+ " or "") .. "(.*)$")
+    local orig = kind == "2" and field() or nil
+    if not xy or not path then return false end
+    local x, y = xy:sub(1, 1), xy:sub(2, 2)
+    if x ~= "." then s.staged[#s.staged + 1] = { path = path, orig = orig, letter = x, kind = xy_kind[x] } end
+    if y ~= "." then s.changes[#s.changes + 1] = { path = path, letter = y, kind = xy_kind[y] } end
+  elseif kind == "u" then
+    s.conflicts[#s.conflicts + 1] = { path = f:match("^u %S+ %S+ %S+ %S+ %S+ %S+ %S+ %S+ %S+ (.*)$"), letter = "!", kind = "conflict" }
+  elseif kind == "?" then
+    s.changes[#s.changes + 1] = { path = f:sub(3), letter = "U", kind = "untracked" }
   end
-  return s
+  return true
+end
+
+local function parse_status(out, cb)
+  local s = { ahead = 0, behind = 0, staged = {}, changes = {}, conflicts = {} }
+  local at, deadline = 1, vim.uv.hrtime() + BUDGET * 1000000
+  local function field()
+    if at > #out then return end
+    local last = out:find("\0", at, true) or (#out + 1)
+    local text = out:sub(at, last - 1)
+    at = last + 1
+    return text
+  end
+  local function batch()
+    local start = vim.uv.hrtime()
+    while vim.uv.hrtime() - start < 2000000 do
+      local f = field()
+      if not f then return cb(s) end
+      if not status_record(s, f, field) then return cb(nil, "invalid git status record") end
+    end
+    if vim.uv.hrtime() > deadline then return cb(nil, "status parsing cut off after 3 s") end
+    vim.defer_fn(batch, 1)
+  end
+  batch()
 end
 
 function M.status(root, cb)
   M.run({ "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all" }, root, function(ok, out, err)
-    cb(ok and parse_status(out) or nil, err)
-  end)
+    if not ok then return cb(nil, err) end
+    parse_status(out, cb)
+  end, { binary = true })
 end
 
 -- File content at a revision: rev = "HEAD", "" (index, i.e. `:path`), or any commit-ish. cb(text|nil).
