@@ -13,15 +13,17 @@ local indices = { result_type = "indices", algorithm = "histogram" }
 local function say(msg, hl) api.nvim_echo({ { msg, hl or "AosDim" } }, false, {}) end
 
 -- Index text as { lines, eol, cr }: a missing final newline and CRLF endings survive a round trip.
+-- Like nvim's 'fileformat' detection, an unterminated last line doesn't count, and mixed endings stay in the text.
 local function split(text)
   local lines = vim.split(text, "\n", { plain = true })
   local eol = lines[#lines] == ""
   if eol then lines[#lines] = nil end
-  local cr = #lines > 0
-  for _, l in ipairs(lines) do
-    if l:sub(-1) ~= "\r" then cr = false break end
+  local ended = eol and #lines or #lines - 1
+  local cr = ended > 0
+  for i = 1, ended do
+    if lines[i]:sub(-1) ~= "\r" then cr = false break end
   end
-  if cr then lines = vim.tbl_map(function(l) return l:sub(1, -2) end, lines) end
+  for i = 1, cr and ended or 0 do lines[i] = lines[i]:sub(1, -2) end
   return { lines = lines, eol = eol, cr = cr }
 end
 
@@ -38,24 +40,27 @@ end
 local function slice(lines, start, count) return count > 0 and vim.list_slice(lines, start, start + count - 1) or {} end
 
 local function side(out, sign, lines, cr, noeol)
-  for _, l in ipairs(lines) do out[#out + 1] = sign .. l .. (cr and "\r" or "") end
+  for i, l in ipairs(lines) do out[#out + 1] = sign .. l .. (cr and not (noeol and i == #lines) and "\r" or "") end
   if noeol and #lines > 0 then out[#out + 1] = "\\ No newline at end of file" end
 end
 
 -- One zero-context hunk; c = { old_start, old_count, new_start, new_count }, where a count of 0 means "after start".
 -- The + start is where the lines land after the earlier hunks of this patch only (delta), not in `new`.
--- Appending after an old last line that lacks its newline rewrites that line, so git adds the newline.
+-- Appending after an old last line that lacks its newline rewrites that line, so git adds the newline; deleting the
+-- last lines of a file whose new end lacks one rewrites the line above, so git drops it.
 local function hunk_lines(out, c, old, new, delta)
-  local olds, news = slice(old.lines, c[1], c[2]), slice(new.lines, c[3], c[4])
+  local start, olds, news, new_last = c[1], slice(old.lines, c[1], c[2]), slice(new.lines, c[3], c[4]), c[3] + c[4] - 1
   if c[2] == 0 and c[1] > 0 and c[1] == #old.lines and not old.eol then
-    olds = { old.lines[c[1]] }
-    news = vim.list_extend({ olds[1] }, news)
+    olds, news = { old.lines[c[1]] }, vim.list_extend({ old.lines[c[1]] }, news)
+  elseif c[4] == 0 and c[3] > 0 and c[3] == #new.lines and c[1] + c[2] - 1 == #old.lines and not new.eol then
+    start, new_last = c[1] - 1, c[3]
+    olds, news = vim.list_extend({ old.lines[start] }, olds), { new.lines[c[3]] }
   end
-  local pos = (#olds > 0 and c[1] - 1 or c[1]) + delta
-  local at_end = (#olds > 0 and c[1] + #olds - 1 or c[1]) >= #old.lines
-  out[#out + 1] = ("@@ -%d,%d +%d,%d @@"):format(c[1], #olds, #news > 0 and pos + 1 or pos, #news)
+  local pos = (#olds > 0 and start - 1 or start) + delta
+  local at_end = (#olds > 0 and start + #olds - 1 or start) >= #old.lines
+  out[#out + 1] = ("@@ -%d,%d +%d,%d @@"):format(start, #olds, #news > 0 and pos + 1 or pos, #news)
   side(out, "-", olds, old.cr, at_end and not old.eol)
-  side(out, "+", news, new.cr, at_end and c[3] + c[4] - 1 >= #new.lines and not new.eol)
+  side(out, "+", news, new.cr, at_end and new_last >= #new.lines and not new.eol)
 end
 
 local quotes = { ["\\"] = "\\\\", ['"'] = '\\"', ["\t"] = "\\t", ["\n"] = "\\n" }
@@ -107,7 +112,17 @@ end
 -- Drawn by the statuscolumn (M.column) in its own cell, so diagnostic signs never hide a hunk.
 local gutter = {} -- buf -> { [lnum] = "%#GitAdd#▎" }
 
-local function place(buf, hunks)
+-- Conflict blocks (<<<<<<< … >>>>>>>) get a red bar over whatever hunk they sit in.
+local function mark_conflicts(buf, rows)
+  local inside = false
+  for l, text in ipairs(api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    inside = inside or text:find("^<<<<<<<") ~= nil
+    if inside then rows[l] = "%#GitDelete#▎%*" end
+    if text:find("^>>>>>>>") then inside = false end
+  end
+end
+
+local function place(buf, hunks, conflict)
   local rows, last = {}, api.nvim_buf_line_count(buf)
   for _, h in ipairs(hunks) do
     local kind = h[2] == 0 and "GitAdd" or h[4] == 0 and "GitDelete" or "GitChange"
@@ -115,6 +130,7 @@ local function place(buf, hunks)
     local first, final = span(h)
     for l = math.min(first, last), math.min(final, last) do rows[l] = "%#" .. kind .. "#" .. text .. "%*" end
   end
+  if conflict then mark_conflicts(buf, rows) end
   gutter[buf] = rows
   pcall(api.nvim__redraw, { buf = buf, statuscolumn = true })
 end
@@ -128,7 +144,7 @@ local function update(buf)
   local st = bufs[buf]
   if not st or not api.nvim_buf_is_valid(buf) then return end
   st.hunks = st.index and vim.text.diff(join(st.index), join(buf_text(buf)), indices) or {}
-  place(buf, st.hunks)
+  place(buf, st.hunks, st.conflict)
 end
 
 local refresh_status
@@ -144,23 +160,28 @@ end
 
 local change_timers = {}
 
-local function watch(path, root)
+-- `only`: react to that entry name alone (packed-refs in a linked worktree's busy common dir).
+local function watch(path, root, only)
   if watchers[path] then return end
   change_timers[root] = change_timers[root] or assert(vim.uv.new_timer())
   local w, timer = assert(vim.uv.new_fs_event()), change_timers[root]
   local ok = w:start(path, {}, function(err, name)
-    if err or (name and name:match("%.lock$")) then return end
+    if err or (name and name:match("%.lock$")) or (only and name ~= only) then return end
     timer:start(120, 0, vim.schedule_wrap(function() on_git_change(root) end))
   end)
   if not ok then return w:close() end
   watchers[path] = w
 end
 
--- A push from a shell only rewrites refs/remotes/<upstream>, below the (non-recursive) gitdir watch.
+-- A push from a shell only rewrites refs/remotes/<upstream>, below the (non-recursive) gitdir watch. While that dir
+-- is missing (refs packed), the nearest parent and packed-refs are watched; the status refresh their events trigger
+-- calls this again, which arms the precise watch once the dir exists.
 local function watch_upstream(loc, upstream)
-  local dir = vim.fs.dirname(loc.common .. "/refs/remotes/" .. upstream)
+  local want = vim.fs.dirname(loc.common .. "/refs/remotes/" .. upstream)
+  local dir = want
   while #dir > #loc.common and not vim.uv.fs_stat(dir) do dir = vim.fs.dirname(dir) end
   watch(dir, loc.root)
+  if dir ~= want then watch(loc.common, loc.root, "packed-refs") end
 end
 
 local function resolved(dir, ok, out)
@@ -177,14 +198,24 @@ local function locate(dir, cb)
   if waiting[dir] then return table.insert(waiting[dir], cb) end
   waiting[dir] = { cb }
   local args = { "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir" }
-  repo.run(args, dir, function(ok, out) resolved(dir, ok, out) end)
+  repo.run(args, dir, function(ok, out) resolved(dir, ok, out) end, { feature = "repo lookup" })
+end
+
+-- The index copy, raw; mid-merge a conflicted path has no stage 0, so diff against ours (stage 2) like VS Code.
+local function read_index(root, rel, cb)
+  local opts = { binary = true, feature = "gutter" }
+  repo.run({ "show", ":" .. rel }, root, function(ok, out, err)
+    if ok then return cb(out, false) end
+    if not err:find("not at stage 0", 1, true) then return cb(nil, false) end
+    repo.run({ "show", ":2:" .. rel }, root, function(ours_ok, ours) cb(ours_ok and ours or nil, true) end, opts)
+  end, opts)
 end
 
 local function track(buf, loc, file, cb)
   local rel = repo.relative(loc.root, file)
-  repo.show_raw(loc.root, "", rel, function(text)
+  read_index(loc.root, rel, function(text, conflict)
     if not api.nvim_buf_is_valid(buf) then return end
-    bufs[buf] = { buf = buf, root = loc.root, rel = rel, index = text and split(text), hunks = {} }
+    bufs[buf] = { buf = buf, root = loc.root, rel = rel, index = text and split(text), conflict = conflict, hunks = {} }
     update(buf)
     if cb then cb() end
   end)
@@ -203,12 +234,31 @@ end
 
 -- Status segment ----------------------------------------------------------------------------
 
+-- One status run per repo at a time; a request meanwhile runs once after it. A failed or cut run keeps the last state.
 refresh_status = function(loc)
+  if loc.pending then loc.again = true return end
+  loc.pending = true
   repo.status(loc.root, function(s)
-    stats[loc.root] = s or false
+    loc.pending = nil
+    if s then stats[loc.root] = s end
     if s and s.upstream then watch_upstream(loc, s.upstream) end
     vim.cmd.redrawtabline()
+    if loc.again then loc.again = nil refresh_status(loc) end
   end)
+end
+
+-- Files created or deleted outside nvim touch neither HEAD nor the index, so poll while focused.
+local poll = assert(vim.uv.new_timer())
+
+local function poll_status()
+  local loc = dirs[vim.fn.getcwd()]
+  if not loc or loc.pending or repo.is_slow(loc.root, "status") then return end
+  refresh_status(loc)
+end
+
+local function polling(on)
+  if not on then return poll:stop() end
+  poll:start(2000, 2000, vim.schedule_wrap(poll_status))
 end
 
 local function cwd_status()
@@ -282,12 +332,24 @@ end
 
 -- Zero-context hunks can't tell that the index moved (pure additions have no '-' lines to check),
 -- so stage and unstage run one at a time per buffer, each building its patch from a fresh index read.
+-- A reload that never calls back (repo lookup cut, buffer turned big) frees the buffer after 3 s.
 local busy = {}
 
 local function exclusive(buf, fn)
   if busy[buf] then return say("◆ still applying the last change") end
-  busy[buf] = true
-  M.reload(buf, function() fn(bufs[buf]) end)
+  local token = {}
+  busy[buf] = token
+  vim.defer_fn(function()
+    if busy[buf] ~= token then return end
+    busy[buf] = nil
+    if not token.started then say("○ skipped · git did not answer within 3 s") end
+    M.reload(buf)
+  end, 3000)
+  M.reload(buf, function()
+    if busy[buf] ~= token then return end
+    token.started = true
+    fn(bufs[buf])
+  end)
 end
 
 local function free(buf, msg)
@@ -315,10 +377,15 @@ local function stage_now(st, buf, l1, l2, lnum, cb)
   end)
 end
 
+local function conflicted(st)
+  if st.conflict then say("○ conflicted · resolve the markers, then <leader>hS marks it resolved") end
+  return st.conflict
+end
+
 function M.stage(l1, l2, cb)
   local st, buf = current()
   local lnum = vim.fn.line(".")
-  if st then exclusive(buf, function(fresh) stage_now(fresh, buf, l1, l2, lnum, cb) end) end
+  if st and not conflicted(st) then exclusive(buf, function(fresh) stage_now(fresh, buf, l1, l2, lnum, cb) end) end
 end
 
 function M.revert(l1, l2)
@@ -359,19 +426,24 @@ local function to_index(hunks, lnum)
   return lnum + delta
 end
 
-local function unstage_from(st, buf, head, lnum)
-  local done = function(ok, _, err)
-    busy[buf] = nil
-    if ok == false then return say("✗ " .. vim.trim(err), "AosFailed") end
-    say("✓ unstaged hunk", "AosDone")
-    M.reload(buf)
+local function unstage_from(st, buf, head, orig, lnum)
+  local function done(msg)
+    return function(ok, _, err)
+      busy[buf] = nil
+      if ok == false then return say("✗ " .. vim.trim(err), "AosFailed") end
+      say(msg, "AosDone")
+      M.reload(buf)
+    end
   end
-  if not head then return repo.run({ "rm", "--cached", "-q", "--", st.rel }, st.root, done) end
+  if not head then return repo.run({ "rm", "--cached", "-q", "--", st.rel }, st.root, done("✓ unstaged " .. st.rel)) end
   local base = split(head)
   local staged = vim.text.diff(join(base), join(st.index), indices) --[[@as integer[][] ]]
+  if #staged == 0 and orig then
+    return repo.run({ "reset", "-q", "--", orig, st.rel }, st.root, done(("✓ unstaged rename %s → %s"):format(orig, st.rel)))
+  end
   if #staged == 0 then return free(buf, "○ nothing staged in " .. st.rel) end
   local h = hunk_at(staged, to_index(st.hunks, lnum)) or staged[#staged]
-  apply(st, patch(st.rel, base, st.index, { h }), { "--reverse" }, done)
+  apply(st, patch(st.rel, base, st.index, { h }), { "--reverse" }, done("✓ unstaged hunk"))
 end
 
 local function staged_orig(s, rel)
@@ -380,14 +452,20 @@ local function staged_orig(s, rel)
   end
 end
 
--- HEAD's copy of the file, following a staged rename; nil for a file that is new in the index.
+local function show_head(st, path, cb)
+  local opts = { binary = true, feature = "unstage" }
+  repo.run({ "show", "HEAD:" .. path }, st.root, function(ok, out, _, cut) cb(ok and out or nil, cut) end, opts)
+end
+
+-- HEAD's copy of the file, following a staged rename: cb(text, orig, cut); text is nil for a file new in the index,
+-- and `cut` means git was too slow to tell, so nothing may be unstaged.
 local function head_text(st, cb)
-  repo.show_raw(st.root, "HEAD", st.rel, function(text)
-    if text then return cb(text) end
+  show_head(st, st.rel, function(text, cut)
+    if text or cut then return cb(text, nil, cut) end
     repo.status(st.root, function(s)
       local orig = staged_orig(s, st.rel)
-      if not orig then return cb(nil) end
-      repo.show_raw(st.root, "HEAD", orig, cb)
+      if not orig then return cb(nil, nil, not s) end
+      show_head(st, orig, function(old, old_cut) cb(old, orig, old_cut) end)
     end)
   end)
 end
@@ -395,11 +473,41 @@ end
 function M.unstage()
   local st, buf = current()
   local lnum = vim.fn.line(".")
-  if not st then return end
+  if not st or conflicted(st) then return end
   exclusive(buf, function(fresh)
     if not fresh.index then return free(buf, "○ nothing staged in " .. fresh.rel) end
-    head_text(fresh, function(head) unstage_from(fresh, buf, head, lnum) end)
+    head_text(fresh, function(head, orig, cut)
+      if cut then return free(buf, "○ skipped · git did not answer within 3 s") end
+      unstage_from(fresh, buf, head, orig, lnum)
+    end)
   end)
+end
+
+-- Keys of this module's own popups (plain data for the hotkey help); each popup binds exactly these.
+local KEYS = {
+  peek = { section = "Hunk peek", keys = {
+    { "s", "stage hunk" }, { "x", "revert hunk" }, { "]h", "next hunk" }, { "[h", "previous hunk" },
+    { "q", "close" }, { "<Esc>", "close" },
+  } },
+  column = { section = "Blame column", keys = { { "<CR>", "show the line's commit" }, { "q", "close" } } },
+  commit = { section = "Blame commit", keys = { { "q", "close" }, { "<Esc>", "close" } } },
+}
+M.keys = { KEYS.peek, KEYS.column, KEYS.commit }
+
+local function bind(buf, section, actions)
+  for _, k in ipairs(section.keys) do
+    vim.keymap.set("n", k[1], actions[k[1]], { buffer = buf, nowait = true, desc = k[2] })
+  end
+end
+
+-- " s stage hunk · … · q/<Esc> close ": neighbours with the same description share one entry.
+local function footer(section)
+  local parts = {}
+  for _, k in ipairs(section.keys) do
+    local last = parts[#parts]
+    if last and last.desc == k[2] then last.lhs = last.lhs .. "/" .. k[1] else parts[#parts + 1] = { lhs = k[1], desc = k[2] } end
+  end
+  return " " .. table.concat(vim.tbl_map(function(p) return p.lhs .. " " .. p.desc end, parts), " · ") .. " "
 end
 
 -- Peek: the hunk's old and new lines in a float under it, with its own stage/revert/move keys --
@@ -446,14 +554,13 @@ local function peek_after(win, fn)
 end
 
 local function peek_keys(pbuf, win)
-  local keys = {
+  bind(pbuf, KEYS.peek, {
     s = peek_after(win, function(cb) M.stage(nil, nil, cb) end),
     x = peek_after(win, function(cb) M.revert() cb() end),
     ["]h"] = peek_after(win, function() M.nav(1) M.peek() end),
     ["[h"] = peek_after(win, function() M.nav(-1) M.peek() end),
     q = close_peek, ["<Esc>"] = close_peek,
-  }
-  for lhs, fn in pairs(keys) do vim.keymap.set("n", lhs, fn, { buffer = pbuf, nowait = true }) end
+  })
 end
 
 function M.peek()
@@ -469,7 +576,7 @@ function M.peek()
     relative = "win", win = win, bufpos = { bottom - 1, 0 }, row = 1, col = 0, style = "minimal",
     width = math.max(api.nvim_win_get_width(win) - vim.fn.getwininfo(win)[1].textoff - 2, 20), height = math.min(#lines, 20),
     title = (" ❯ hunk %d/%d "):format(i, #st.hunks), title_pos = "left",
-    footer = " s stage · x revert · ]h [h move · q close ", footer_pos = "right",
+    footer = footer(KEYS.peek), footer_pos = "right",
   })
   peek_keys(pbuf, win)
   local pwin = peek_win
@@ -531,16 +638,17 @@ local function line_blame()
   if not blame.on or not st or api.nvim_get_mode().mode ~= "n" or blame.at == buf .. ":" .. lnum then return end
   blame.seq, blame.at = blame.seq + 1, buf .. ":" .. lnum
   local seq = blame.seq
-  if blame.job and not blame.job:is_closing() then blame.job:kill(15) end
-  blame.job = repo.run(blame_args(st, { "-L", lnum .. "," .. lnum }), st.root, function(ok, out)
-    if seq ~= blame.seq then return end
+  local function done(ok, out, _, cut)
+    if seq ~= blame.seq or cut then return end
     show_line_blame(buf, lnum, ok and parse_blame(out)[lnum] or { sha = zero })
-  end, { stdin = contents(buf) })
+  end
+  blame.job = repo.run(blame_args(st, { "-L", lnum .. "," .. lnum }), st.root, done, { stdin = contents(buf), feature = "line blame" })
 end
 
 local function clear_line_blame(ev)
   if blame.at and blame.at == ev.buf .. ":" .. vim.fn.line(".") and ev.event == "CursorMoved" then return end
   blame.at, blame.seq = nil, blame.seq + 1
+  if blame.job and not blame.job:is_closing() then blame.job:kill(15) end
   api.nvim_buf_clear_namespace(ev.buf, blame_ns, 0, -1)
 end
 
@@ -570,35 +678,82 @@ local function blame_row(c)
   return ("%s %s%s %s"):format(c.sha:sub(1, 7), author, (" "):rep(14 - vim.fn.strchars(author)), os.date("%Y-%m-%d", tonumber(c["author-time"]) or 0))
 end
 
-local function render_split(lines, count)
-  local bbuf, rows = split_state.buf, {}
-  for i = 1, count do rows[i] = lines[i] and "▎" .. blame_row(lines[i]) or "" end
-  vim.bo[bbuf].modifiable = true
-  api.nvim_buf_set_lines(bbuf, 0, -1, false, rows)
-  vim.bo[bbuf].modifiable = false
-  api.nvim_buf_clear_namespace(bbuf, blame_ns, 0, -1)
-  for i = 1, count do
-    local c, run = lines[i], lines[i - 1] and lines[i] and lines[i - 1].sha == lines[i].sha
-    if c then
-      api.nvim_buf_set_extmark(bbuf, blame_ns, i - 1, 0, { end_col = #"▎", hl_group = age_hl(c) })
-      api.nvim_buf_set_extmark(bbuf, blame_ns, i - 1, #"▎", { end_col = #rows[i], hl_group = run and "AosFaint" or "AosDim" })
-      if not run then api.nvim_buf_set_extmark(bbuf, blame_ns, i - 1, #"▎", { end_col = rows[i]:find(" ", 1, true) - 1, hl_group = age_hl(c) }) end
-    end
-  end
-  split_state.lines = lines
+local COLUMN_OPTS = {
+  number = false, relativenumber = false, signcolumn = "no", foldcolumn = "0", wrap = false,
+  winfixwidth = true, cursorline = true, list = false, statuscolumn = "",
+}
+
+local function paint_row(s, l)
+  local c, row = s.lines[l], api.nvim_buf_get_lines(s.buf, l - 1, l, false)[1]
+  api.nvim_buf_clear_namespace(s.buf, blame_ns, l - 1, l)
+  if not c or not row then return end
+  local run = s.lines[l - 1] and s.lines[l - 1].sha == c.sha
+  api.nvim_buf_set_extmark(s.buf, blame_ns, l - 1, 0, { end_col = #"▎", hl_group = age_hl(c) })
+  api.nvim_buf_set_extmark(s.buf, blame_ns, l - 1, #"▎", { end_col = #row, hl_group = run and "AosFaint" or "AosDim" })
+  if not run then api.nvim_buf_set_extmark(s.buf, blame_ns, l - 1, #"▎", { end_col = row:find(" ", 1, true) - 1, hl_group = age_hl(c) }) end
 end
 
+local function set_rows(s, from, to, rows)
+  vim.bo[s.buf].modifiable = true
+  api.nvim_buf_set_lines(s.buf, from, to, false, rows)
+  vim.bo[s.buf].modifiable = false
+end
+
+local function render_range(s, blamed, from, to)
+  local rows = {}
+  for l = from, to do
+    s.lines[l], s.done[l] = blamed[l], true
+    rows[#rows + 1] = blamed[l] and "▎" .. blame_row(blamed[l]) or ""
+  end
+  set_rows(s, from - 1, to, rows)
+  for l = from, math.min(to + 1, s.count) do paint_row(s, l) end
+end
+
+local function pause_note(s, from)
+  s.paused = true
+  local row = math.max(from, vim.fn.getwininfo(s.swin)[1].topline)
+  local note = { { "○ blame paused · slow repo", "AosDim" } }
+  api.nvim_buf_set_extmark(s.buf, blame_ns, row - 1, 0, { virt_text = note, virt_text_pos = "overlay" })
+end
+
+-- The not yet blamed part of the visible source lines ± one screen: one blame call never covers more.
+local function wanted(s)
+  local info = vim.fn.getwininfo(s.swin)[1]
+  local h = info.botline - info.topline + 1
+  local a, b = math.max(1, info.topline - h), math.min(s.count, info.botline + h)
+  while a <= b and s.done[a] do a = a + 1 end
+  while b >= a and s.done[b] do b = b - 1 end
+  if a <= b then return a, b end
+end
+
+-- Blames what scrolled into view; a run for a range the view left is killed first.
+local function fill_split(s)
+  if not s or split_state ~= s or s.paused or s.failed or not api.nvim_win_is_valid(s.swin) or not bufs[s.src] then return end
+  local from, to = wanted(s)
+  if not from or (s.want and s.want[1] <= from and s.want[2] >= to) then return end
+  if s.job then s.job:kill(15) end
+  local st, seq = bufs[s.src], s.seq + 1
+  s.seq, s.want = seq, { from, to }
+  s.job = repo.run(blame_args(st, { "-L", from .. "," .. to }), st.root, function(ok, out, err, cut)
+    if split_state ~= s or seq ~= s.seq or not api.nvim_buf_is_valid(s.buf) then return end
+    s.job, s.want = nil, nil
+    if cut then return pause_note(s, from) end
+    if not ok then s.failed = true return say("✗ " .. vim.trim(err), "AosFailed") end
+    render_range(s, parse_blame(out), from, to)
+    fill_split(s)
+  end, { stdin = s.contents, feature = "file blame" })
+end
+
+-- The source changed: keep the column as long as the source and re-blame from the visible lines out.
 local function rerun_split()
   local s = split_state
-  if not s or not api.nvim_win_is_valid(s.win) then return end
-  local st = bufs[s.src]
-  if not st then return end
-  repo.run(blame_args(st, {}), st.root, function(ok, out, err)
-    if not ok then return say("✗ " .. vim.trim(err), "AosFailed") end
-    if split_state ~= s or not api.nvim_buf_is_valid(s.buf) then return end
-    render_split(parse_blame(out), api.nvim_buf_line_count(s.src))
-    api.nvim_win_call(s.swin, function() vim.cmd("syncbind") end)
-  end, { stdin = contents(s.src) })
+  if not s or not api.nvim_win_is_valid(s.win) or not bufs[s.src] then return end
+  if s.job then s.job:kill(15) end
+  s.count, s.contents, s.lines, s.done = api.nvim_buf_line_count(s.src), contents(s.src), {}, {}
+  s.seq, s.job, s.want, s.failed = s.seq + 1, nil, nil, nil
+  local have = api.nvim_buf_line_count(s.buf)
+  set_rows(s, math.min(have, s.count), have, vim.fn["repeat"]({ "" }, math.max(s.count - have, 0)))
+  fill_split(s)
 end
 
 local function show_commit()
@@ -613,44 +768,59 @@ local function show_commit()
     api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].filetype, vim.bo[buf].modifiable, vim.bo[buf].bufhidden = "git", false, "wipe"
     local w, h = math.min(120, vim.o.columns - 8), math.min(#lines, vim.o.lines - 6)
-    api.nvim_open_win(buf, true, {
+    local win = api.nvim_open_win(buf, true, {
       relative = "editor", row = math.floor((vim.o.lines - h) / 2) - 1, col = math.floor((vim.o.columns - w) / 2), width = w, height = h,
-      title = (" ❯ show · %s · %s "):format(c.sha:sub(1, 7), st.rel), title_pos = "left",
+      title = (" ❯ show · %s · %s "):format(c.sha:sub(1, 7), st.rel), title_pos = "left", footer = footer(KEYS.commit), footer_pos = "right",
     })
-    for _, lhs in ipairs({ "q", "<Esc>" }) do vim.keymap.set("n", lhs, "<cmd>close<cr>", { buffer = buf, nowait = true }) end
-  end)
+    local close = function() api.nvim_win_close(win, true) end
+    bind(buf, KEYS.commit, { q = close, ["<Esc>"] = close })
+  end, { feature = "blame commit" })
+end
+
+-- The column is the last window: show the source in it instead (quitting nvim here would trip E37/E173).
+local function reuse_column(s)
+  api.nvim_win_set_buf(s.win, api.nvim_buf_is_valid(s.src) and s.src or api.nvim_create_buf(true, false))
+  for opt in pairs(COLUMN_OPTS) do vim.wo[s.win][0][opt] = vim.go[opt] end
+  vim.wo[s.win][0].winbar, vim.wo[s.win][0].scrollbind, vim.wo[s.win][0].cursorbind = vim.go.winbar, false, false
 end
 
 local function close_split()
   local s = split_state
   split_state = nil
   if not s then return end
-  if api.nvim_win_is_valid(s.swin) then vim.wo[s.swin].scrollbind, vim.wo[s.swin].cursorbind = false, false end
+  if s.job then s.job:kill(15) end
+  if api.nvim_win_is_valid(s.swin) then vim.wo[s.swin][0].scrollbind, vim.wo[s.swin][0].cursorbind = false, false end
   pcall(api.nvim_del_augroup_by_name, "GitBlameSplit")
-  if not api.nvim_win_is_valid(s.win) then return end
-  -- The source window was closed with :q and the blame column is all that is left.
-  if #api.nvim_list_tabpages() == 1 and #api.nvim_tabpage_list_wins(0) == 1 then return vim.cmd("silent! quit") end
-  api.nvim_win_close(s.win, true)
+  if api.nvim_win_is_valid(s.win) and not pcall(api.nvim_win_close, s.win, true) then reuse_column(s) end
+end
+
+local scroll_timer = assert(vim.uv.new_timer())
+
+local function split_autocmds(src, swin, bwin)
+  local group = api.nvim_create_augroup("GitBlameSplit", {})
+  local au = function(ev, opts) api.nvim_create_autocmd(ev, vim.tbl_extend("force", { group = group }, opts)) end
+  au("WinClosed", { pattern = { tostring(bwin), tostring(swin) }, callback = vim.schedule_wrap(close_split) })
+  -- :q in the source window takes the column with it before Vim decides whether this is the last window.
+  au("QuitPre", { callback = function() if api.nvim_get_current_win() == swin then close_split() end end })
+  au("BufWinEnter", { callback = function(ev)
+    if api.nvim_get_current_win() == swin and ev.buf ~= src then vim.schedule(close_split) end
+  end })
+  au({ "BufWritePost", "TextChanged", "InsertLeave" }, { buffer = src, callback = rerun_split })
+  au({ "WinScrolled", "WinResized" }, { callback = function()
+    scroll_timer:start(80, 0, vim.schedule_wrap(function() fill_split(split_state) end))
+  end })
 end
 
 local function open_split(src, swin)
   local bbuf = api.nvim_create_buf(false, true)
   vim.bo[bbuf].bufhidden, vim.bo[bbuf].filetype = "wipe", "gitblame"
   local bwin = api.nvim_open_win(bbuf, false, { split = "left", win = swin, width = 36 })
-  for opt, val in pairs({ number = false, relativenumber = false, signcolumn = "no", foldcolumn = "0", wrap = false, winfixwidth = true, cursorline = true, list = false, statuscolumn = "" }) do
-    vim.wo[bwin][opt] = val
-  end
-  vim.wo[bwin].winbar = vim.wo[swin].winbar ~= "" and "%#AosPrompt#❯ %#AosArg#blame" or ""
-  split_state = { win = bwin, buf = bbuf, src = src, swin = swin, lines = {} }
-  for _, w in ipairs({ bwin, swin }) do vim.wo[w].scrollbind, vim.wo[w].cursorbind = true, true end
-  vim.keymap.set("n", "q", close_split, { buffer = bbuf, nowait = true })
-  vim.keymap.set("n", "<CR>", show_commit, { buffer = bbuf, nowait = true })
-  local group = api.nvim_create_augroup("GitBlameSplit", {})
-  api.nvim_create_autocmd("WinClosed", { group = group, pattern = { tostring(bwin), tostring(swin) }, callback = vim.schedule_wrap(close_split) })
-  api.nvim_create_autocmd("BufWinEnter", { group = group, callback = function(ev)
-    if api.nvim_get_current_win() == swin and ev.buf ~= src then vim.schedule(close_split) end
-  end })
-  api.nvim_create_autocmd({ "BufWritePost", "TextChanged", "InsertLeave" }, { group = group, buffer = src, callback = rerun_split })
+  for opt, val in pairs(COLUMN_OPTS) do vim.wo[bwin][0][opt] = val end
+  vim.wo[bwin][0].winbar = vim.wo[swin].winbar ~= "" and "%#AosPrompt#❯ %#AosArg#blame" or ""
+  split_state = { win = bwin, buf = bbuf, src = src, swin = swin, lines = {}, done = {}, seq = 0 }
+  for _, w in ipairs({ bwin, swin }) do vim.wo[w][0].scrollbind, vim.wo[w][0].cursorbind = true, true end
+  bind(bbuf, KEYS.column, { ["<CR>"] = show_commit, q = close_split })
+  split_autocmds(src, swin, bwin)
 end
 
 function M.blame_file()
@@ -658,8 +828,10 @@ function M.blame_file()
   local st, buf = current()
   if not st then return end
   if not st.index then return say("○ not in the index: nothing to blame") end
-  open_split(buf, api.nvim_get_current_win())
+  local swin = api.nvim_get_current_win()
+  open_split(buf, swin)
   rerun_split()
+  api.nvim_win_call(swin, function() vim.cmd("syncbind") end)
 end
 
 -- Setup --------------------------------------------------------------------------------------
@@ -700,6 +872,9 @@ function M.setup()
   au({ "BufReadPost", "BufWritePost", "FileChangedShellPost" }, function(ev) M.reload(ev.buf) end)
   au({ "TextChanged", "InsertLeave" }, debounced)
   au({ "BufWritePost", "FocusGained", "DirChanged", "ShellCmdPost" }, refresh_cwd)
+  au("FocusGained", function() polling(true) end)
+  au("FocusLost", function() polling(false) end)
+  polling(true)
   au("CursorHold", line_blame)
   au({ "CursorMoved", "InsertEnter", "BufLeave" }, clear_line_blame)
   au("BufWipeout", function(ev)
