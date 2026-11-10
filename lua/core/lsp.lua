@@ -1,7 +1,6 @@
--- Native LSP (vim.lsp.config/enable); nvim-lspconfig supplies only the server defaults.
+-- Native LSP (vim.lsp.config/enable); each server lives in lsp/<name>.lua.
 local M = {}
 
-local home = vim.env.HOME
 -- Servers that are always wanted; extras are enabled only when their binary is installed.
 local servers = {
   "ts_ls", "tsc", "rust_analyzer", "emmet_ls", "tailwindcss", "svelte", "jsonls", "html", "cssls", "ruff",
@@ -13,6 +12,17 @@ local extras = {
   copilot = "copilot-language-server",
 }
 
+-- cmd that prefers the project's node_modules/.bin copy of `bin`.
+function M.node_cmd(bin, ...)
+  local args = { ... }
+  return function(dispatchers, config)
+    local root = config and config.root_dir
+    local local_bin = root and vim.fs.joinpath(root, "node_modules/.bin", bin)
+    local exe = local_bin and vim.fn.executable(local_bin) == 1 and local_bin or bin
+    return vim.lsp.rpc.start({ exe, unpack(args) }, dispatchers)
+  end
+end
+
 -- typescript-language-server needs a tsserver.js; TypeScript 7 (native) ships none and serves LSP itself.
 local function legacy_tsserver(root)
   for dir in vim.fs.parents(root .. "/x") do
@@ -21,64 +31,14 @@ local function legacy_tsserver(root)
   return false
 end
 
-local function ts_root(buf)
-  if vim.fs.root(buf, { "deno.json", "deno.jsonc" }) then return nil end
-  local locks = { "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock" }
-  return vim.fs.root(buf, { locks, { ".git" } }) or vim.fn.getcwd()
-end
-
-local function tsc_cmd(dispatchers, config)
-  local root = config.root_dir or vim.fn.getcwd()
-  local candidates = { root .. "/node_modules/.bin/tsc", root .. "/node_modules/.bin/tsgo", "tsc", "tsgo" }
-  local exe = vim.iter(candidates):find(function(c) return vim.fn.executable(c) == 1 end)
-  return vim.lsp.rpc.start({ exe, "--lsp", "--stdio" }, dispatchers)
-end
-
-local function configure()
-  -- One position encoding for every server, so copilot (UTF-16) and the rest agree on a shared buffer.
-  vim.lsp.config("*", { root_markers = { ".git" }, capabilities = { general = { positionEncodings = { "utf-16" } } } })
-  vim.lsp.config("ts_ls", {
-    root_dir = function(buf, on_dir)
-      local root = ts_root(buf)
-      if root and legacy_tsserver(root) then on_dir(root) end
-    end,
-    on_attach = function(client) client.server_capabilities.documentFormattingProvider = false end,
-  })
-  vim.lsp.config("tsc", {
-    cmd = tsc_cmd,
-    root_dir = function(buf, on_dir)
-      local root = ts_root(buf)
-      if root and not legacy_tsserver(root) then on_dir(root) end
-    end,
-    on_attach = function(client) client.server_capabilities.documentFormattingProvider = false end,
-  })
-
-  -- rustup's rust-analyzer matches the active toolchain; Mason's standalone build may not.
-  local rustup_ra = home .. "/.cargo/bin/rust-analyzer"
-  vim.lsp.config("rust_analyzer", {
-    cmd = { vim.fn.executable(rustup_ra) == 1 and rustup_ra or "rust-analyzer" },
-    settings = {
-      ["rust-analyzer"] = {
-        check = { command = "clippy" },
-        cargo = { allFeatures = true },
-        procMacro = { enable = true },
-      },
-    },
-  })
-
-  vim.lsp.config("emmet_ls", {
-    filetypes = { "html", "htmldjango", "typescriptreact", "javascriptreact", "css", "sass", "scss", "less" },
-    init_options = { html = { options = { ["bem.enabled"] = true, ["jsx.enabled"] = true } } },
-  })
-  vim.lsp.config("solidity_ls_nomicfoundation", {
-    cmd = { "nomicfoundation-solidity-language-server", "--stdio" },
-    filetypes = { "solidity" },
-    root_markers = { "hardhat.config.js", "hardhat.config.ts", "foundry.toml", ".git" },
-  })
-  vim.lsp.config("move_analyzer", { cmd = { "move-analyzer" }, filetypes = { "move" }, root_markers = { "Move.toml" }, workspace_required = true })
-  vim.lsp.config("lua_ls", {
-    settings = { Lua = { runtime = { version = "LuaJIT" }, workspace = { library = { vim.env.VIMRUNTIME } } } },
-  })
+-- root_dir for ts_ls (legacy = true) or tsc (legacy = false); Deno projects get neither.
+function M.ts_root(legacy)
+  return function(buf, on_dir)
+    if vim.fs.root(buf, { "deno.json", "deno.jsonc" }) then return end
+    local locks = { "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock" }
+    local root = vim.fs.root(buf, { locks, { ".git" } }) or vim.fn.getcwd()
+    if legacy_tsserver(root) == legacy then on_dir(root) end
+  end
 end
 
 local function on_attach(ev)
@@ -101,8 +61,11 @@ local function on_attach(ev)
   if client:supports_method("textDocument/linkedEditingRange") then vim.lsp.linked_editing_range.enable(true, { client_id = client.id }) end
 end
 
-function M.setup()
-  configure()
+local function start()
+  -- Requiring blink.cmp loads it before the first client starts, so every server gets its capabilities.
+  -- One position encoding for every server, so copilot (UTF-16) and the rest agree on a shared buffer.
+  local caps = require("blink.cmp").get_lsp_capabilities({ general = { positionEncodings = { "utf-16" } } })
+  vim.lsp.config("*", { root_markers = { ".git" }, capabilities = caps })
   vim.lsp.enable(servers)
   for name, bin in pairs(extras) do
     if vim.fn.executable(bin) == 1 then vim.lsp.enable(name) end
@@ -124,6 +87,11 @@ function M.setup()
     signs = { text = glyphs },
   })
   require("ui.lsp").setup()
+end
+
+-- Deferred to the first file read or created, so starting nvim without a file does no LSP work.
+function M.setup()
+  vim.api.nvim_create_autocmd({ "BufReadPre", "BufNewFile" }, { once = true, callback = start })
 end
 
 return M
