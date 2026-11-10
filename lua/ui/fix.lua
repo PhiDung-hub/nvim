@@ -25,7 +25,24 @@ local function codex_ok() return vim.fn.executable("codex") == 1 end
 -- Diagnostics and requests -------------------------------------------------------------------
 
 local function line_diags(buf, first, last)
-  return vim.tbl_filter(function(d) return d.lnum <= last and (d.end_lnum or d.lnum) >= first end, vim.diagnostic.get(buf))
+  local out = vim.tbl_filter(function(d) return d.lnum <= last and (d.end_lnum or d.lnum) >= first end, vim.diagnostic.get(buf))
+  table.sort(out, function(a, b) return a.lnum < b.lnum end)
+  return out
+end
+
+local function covers(d, row, col)
+  local er, ec = d.end_lnum or d.lnum, d.end_col or d.col
+  if er == d.lnum then ec = math.max(ec, d.col + 1) end
+  return (d.lnum < row or d.lnum == row and d.col <= col) and (row < er or row == er and col < ec)
+end
+
+-- The diagnostics under the cursor when it sits on one (`at`), else the cursor line's.
+local function at_cursor(buf)
+  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+  local diags = line_diags(buf, row - 1, row - 1)
+  local at = vim.tbl_filter(function(d) return covers(d, row - 1, col) end, diags)
+  local key = table.concat(vim.tbl_map(function(d) return d.lnum .. ":" .. d.col .. ":" .. tostring(d.end_col) end, at), ",")
+  return { row = row - 1, diags = #at > 0 and at or diags, at = #at > 0, key = key }
 end
 
 -- The LSP form of the diagnostics `client` published (push or pull namespaces).
@@ -41,12 +58,19 @@ end
 
 local function is_quick(a) return type(a.kind) == "string" and (a.kind == "quickfix" or vim.startswith(a.kind, "quickfix.")) end
 
-local function collect(buf, results)
+local function suppress(e)
+  local t = e.action.title:lower()
+  return t:find("disable") or t:find("ignore") or t:find("noqa") or t:find("suppress")
+end
+
+local function fixes(entries) return vim.tbl_filter(function(e) return e.quick and not suppress(e) end, entries) end
+
+local function collect(buf, results, tick)
   local out = {}
   for id, r in pairs(results) do
     local client = vim.lsp.get_client_by_id(id)
     for _, a in ipairs(client and r.result or {}) do
-      if not a.disabled then out[#out + 1] = { action = a, client = client, buf = buf, quick = is_quick(a), preferred = a.isPreferred == true, n = #out } end
+      if not a.disabled then out[#out + 1] = { action = a, client = client, buf = buf, tick = tick, quick = is_quick(a), preferred = a.isPreferred == true, n = #out } end
     end
   end
   table.sort(out, function(a, b)
@@ -62,18 +86,22 @@ local function line_range(buf, first, last, enc)
   return { start = { line = first, character = 0 }, ["end"] = { line = last, character = vim.lsp.util.character_offset(buf, last, #text, enc) } }
 end
 
--- Code actions from every client for rows first..last (0-based), or at the cursor (`opts.cursor`).
--- Returns the cancel function of the request.
+local function range_params(buf, opts, enc)
+  if opts.cursor then return vim.lsp.util.make_range_params(0, enc) end
+  if opts.pos then return vim.lsp.util.make_given_range_params(opts.pos[1], opts.pos[2], buf, enc) end
+  return { textDocument = vim.lsp.util.make_text_document_params(buf), range = line_range(buf, opts.first, opts.last, enc) }
+end
+
+-- Code actions from every client for rows first..last (0-based), the charwise selection
+-- (`opts.pos`) or the cursor (`opts.cursor`). Returns the cancel function of the request.
 local function request(buf, opts, cb)
   if #vim.lsp.get_clients({ bufnr = buf, method = METHOD }) == 0 then return cb({}) end
-  local diags = opts.diags or line_diags(buf, opts.first, opts.last)
+  local diags, tick = opts.diags or line_diags(buf, opts.first, opts.last), vim.b[buf].changedtick
   return vim.lsp.buf_request_all(buf, METHOD, function(client)
-    local enc = client.offset_encoding
-    local p = opts.cursor and vim.lsp.util.make_range_params(0, enc)
-      or { textDocument = vim.lsp.util.make_text_document_params(buf), range = line_range(buf, opts.first, opts.last, enc) }
+    local p = range_params(buf, opts, client.offset_encoding)
     p.context = { diagnostics = owned(client, diags), only = opts.only, triggerKind = opts.trigger or 1 }
     return p
-  end, function(results) cb(collect(buf, results)) end)
+  end, function(results) cb(collect(buf, results, tick)) end)
 end
 
 -- Resolving and applying ---------------------------------------------------------------------
@@ -99,11 +127,17 @@ local function run_command(e, cmd, tick, done)
   vim.defer_fn(finish, WAIT_MS)
 end
 
--- Apply the edit, then the command; done(changed). `join` folds it into the previous undo block.
+-- Apply the edit, then the command; done(changed, stale). `join` folds it into the previous undo
+-- block. An edit computed before the buffer last changed is refused: servers that send version 0
+-- (ts_ls) skip apply_workspace_edit's own check.
 local function apply(e, done, join)
   done = done or function() end
   resolve(e, function(a)
     local tick = vim.b[e.buf].changedtick
+    if e.tick ~= tick then
+      if not join then vim.notify("! buffer changed since the fixes were listed · try again", vim.log.levels.WARN) end
+      return done(false, true)
+    end
     if join then pcall(vim.api.nvim_buf_call, e.buf, function() vim.cmd("silent! undojoin") end) end
     if a.edit then vim.lsp.util.apply_workspace_edit(a.edit, e.client.offset_encoding) end
     local cmd = type(a.command) == "table" and a.command or type(a.command) == "string" and a or nil
@@ -122,7 +156,7 @@ end
 
 -- `lines` with the TextEdits applied, as one string; positions count in `enc`.
 local function edited(lines, edits, enc)
-  local text, starts, off = table.concat(lines, "\n"), {}, 0
+  local text, starts, off = table.concat(lines, "\n") .. "\n", {}, 0
   for i, l in ipairs(lines) do starts[i], off = off, off + #l + 1 end
   local function offset(pos)
     local l = lines[pos.line + 1]
@@ -137,7 +171,7 @@ local function edited(lines, edits, enc)
     return a.i > b.i
   end)
   for _, e in ipairs(list) do text = text:sub(1, e.s) .. e.t .. text:sub(e.e + 1) end
-  return text
+  return (text:gsub("\n$", ""))
 end
 
 local function file_lines(path)
@@ -250,7 +284,7 @@ local function parse(reply, lo, hi)
   if not ints or type(lines) ~= "table" then return nil, "codex reply lacks integer start/end and lines" end
   if s < lo or e > hi or e < s - 1 then return nil, ("codex range %d-%d is outside lines %d-%d"):format(s, e, lo, hi) end
   if not vim.iter(lines):all(function(l) return type(l) == "string" end) then return nil, "codex lines are not all strings" end
-  return { start = s, stop = e, lines = lines }
+  return { start = s, stop = e, lines = vim.iter(lines):map(function(l) return vim.split(l, "\r?\n") end):flatten():totable() }
 end
 
 local function codex_preview(buf, fix, tick)
@@ -281,12 +315,12 @@ local function codex_preview(buf, fix, tick)
 end
 
 -- Ask Codex for a fix of the diagnostics on `row`; ◆ shows while it works, <C-c> or moving on cancels.
-function M.codex(buf, row)
-  local diags = line_diags(buf, row, row)
+function M.codex(buf, row, diags)
+  diags = diags or line_diags(buf, row, row)
   if #diags == 0 then return vim.notify("○ no diagnostics on this line") end
   if codex_job then codex_job("○ codex fix replaced") end
   local text, lo, hi = codex_prompt(buf, row, diags)
-  local tick, job = vim.b[buf].changedtick, {}
+  local tick, job, crow = vim.b[buf].changedtick, {}, vim.fn.line(".") - 1
   local group = vim.api.nvim_create_augroup("UiFixCodex", {})
   local timer = assert(vim.uv.new_timer())
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
@@ -318,32 +352,35 @@ function M.codex(buf, row)
   vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter", "TextChanged", "BufLeave" }, {
     group = group,
     callback = function(ev)
-      if ev.event == "CursorMoved" and vim.api.nvim_get_current_buf() == buf and vim.fn.line(".") - 1 == row then return end
+      if ev.event == "CursorMoved" and vim.api.nvim_get_current_buf() == buf and vim.fn.line(".") - 1 == crow then return end
       cancel("○ codex fix cancelled")
     end,
   })
   job.cancel = require("core.complete").ask(CODEX_INSTRUCTIONS, text, vim.schedule_wrap(received))
 end
 
-local function ask_agent(t, buf, row, diags)
+local function ask_agent(t, buf, diags)
   local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":.")
   local msgs = vim.tbl_map(function(d) return ("%s:%d: %s"):format(path, d.lnum + 1, diag_text(d)) end, diags)
-  require("agent").send_task(t, buf, row + 1, row + 1, "Fix " .. table.concat(msgs, "; "))
-  vim.notify(("◆ asked %s to fix %s:%d"):format(t.kind, path, row + 1))
+  local last = math.max(unpack(vim.tbl_map(function(d) return d.end_lnum or d.lnum end, diags)))
+  require("agent").send_task(t, buf, diags[1].lnum + 1, last + 1, "Fix " .. table.concat(msgs, "; "))
+  vim.notify(("◆ asked %s to fix %s:%d"):format(t.kind, path, diags[1].lnum + 1))
 end
 
-local function ai_items(buf, row, diags)
+-- `diags` sorted by line; Codex and the agent get exactly the diagnostics the preview lists.
+local function ai_items(buf, diags)
   if #diags == 0 then return {} end
+  local row = diags[1].lnum
   local rows = vim.tbl_map(function(d) return { ("%d: %s"):format(d.lnum + 1, diag_text(d)), "AosDim" } end, diags)
   table.insert(rows, 1, { "✦ sends these diagnostics with the code around them:", "AosSha" })
   local items = {}
   if codex_ok() then
     local item = { glyph = "✦", hl = "AosCodex", id = "codex", text = "Ask Codex to fix" }
-    items[1] = { item = item, ref = { rows = rows, run = function() M.codex(buf, row) end } }
+    items[1] = { item = item, ref = { rows = rows, run = function() M.codex(buf, row, diags) end } }
   end
   local t = require("agent").attached()
   if t then
-    local run = function() ask_agent(t, buf, row, diags) end
+    local run = function() ask_agent(t, buf, diags) end
     local item = { glyph = "✦", hl = t.kind == "claude" and "AosClaude" or "AosCodex", id = t.kind, text = ("Ask %s to fix"):format(t.kind) }
     items[#items + 1] = { item = item, ref = { rows = rows, run = run } }
   end
@@ -354,46 +391,59 @@ end
 
 local function choose(e)
   if e.run then return e.run() end
-  apply(e, function() vim.notify("✓ " .. trunc(e.action.title, 80)) end)
+  apply(e, function(_, stale)
+    if not stale then vim.notify("✓ " .. trunc(e.action.title, 80)) end
+  end)
 end
 
-local function open_picker(entries, extra)
+-- `ai_first` when the servers offer no fix: the AI items lead, as the hint promised.
+local function open_picker(entries, extra, ai_first)
   local items, refs = {}, {}
   local function add(item, ref)
     refs[#refs + 1] = ref
     item.data = { i = #refs }
     items[#items + 1] = item
   end
+  local function add_extra() for _, x in ipairs(extra) do add(x.item, x.ref) end end
+  if ai_first then add_extra() end
   for _, e in ipairs(entries) do
-    local glyph, hl = "·", "AosFaint"
+    local glyph, hl = "▸", "AosDim"
     if e.quick then glyph, hl = e.preferred and "◆" or "○", e.preferred and "AosRunning" or "AosDim" end
     add({ glyph = glyph, hl = hl, id = e.client.name, text = (e.action.title:gsub("\n", " ")) }, e)
   end
-  for _, x in ipairs(extra) do add(x.item, x.ref) end
+  if not ai_first then add_extra() end
   if #items == 0 then return vim.notify("○ no code actions here") end
   pick.open({ title = "quick fix", items = items, preview = previewer(refs), on_choose = function(item) choose(refs[item.data.i]) end })
 end
 
--- Cursor line (normal) or the selected lines (visual), 0-based.
-local function target_rows()
-  local row = vim.fn.line(".") - 1
-  if not vim.fn.mode():match("[vV\22]") then return row, row, false end
-  local other = vim.fn.line("v") - 1
+-- Request options for the cursor (the diagnostic under it, else its line) or the selection:
+-- whole lines, or the exact range of a charwise one.
+local function target(buf)
+  local mode = vim.fn.mode()
+  if not mode:match("[vV\22]") then
+    local c = at_cursor(buf)
+    return { first = c.row, last = c.row, diags = c.diags, cursor = c.at or #c.diags == 0 }
+  end
+  local a, b = vim.fn.getpos("v"), vim.fn.getpos(".")
   vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nx", false)
-  return math.min(row, other), math.max(row, other), true
+  if a[2] > b[2] or a[2] == b[2] and a[3] > b[3] then a, b = b, a end
+  local opts = { first = a[2] - 1, last = b[2] - 1, diags = line_diags(buf, a[2] - 1, b[2] - 1) }
+  if mode == "v" then opts.pos = { { a[2], a[3] - 1 }, { b[2], math.min(b[3], #vim.fn.getline(b[2])) - 1 } } end
+  return opts
 end
 
--- `direct`: apply the one preferred (or only) quickfix without asking.
+-- `direct`: apply the one preferred (or only) real fix without asking; suppressions never count.
 local function code_actions(direct)
   local buf = vim.api.nvim_get_current_buf()
-  local first, last, visual = target_rows()
-  local diags = line_diags(buf, first, last)
-  request(buf, { first = first, last = last, cursor = #diags == 0 and not visual }, function(entries)
-    local quick = vim.tbl_filter(function(e) return e.quick end, entries)
+  local opts = target(buf)
+  request(buf, opts, function(entries)
+    local quick = fixes(entries)
     local preferred = vim.tbl_filter(function(e) return e.preferred end, quick)
     local one = #preferred == 1 and preferred[1] or #quick == 1 and quick[1] or nil
-    if direct and one then return apply(one, function() vim.notify("✓ fixed · " .. trunc(one.action.title, 80)) end) end
-    open_picker(entries, ai_items(buf, first, diags))
+    if not (direct and one) then return open_picker(entries, ai_items(buf, opts.diags), #quick == 0) end
+    apply(one, function(_, stale)
+      if not stale then vim.notify("✓ fixed · " .. trunc(one.action.title, 80)) end
+    end)
   end)
 end
 
@@ -419,8 +469,8 @@ local function covered(buf, d)
   return table.concat(vim.api.nvim_buf_get_lines(buf, d.lnum, (d.end_lnum or d.lnum) + 1, false), "\n")
 end
 
--- The lines each diagnostic sat on before any edit. Servers that only re-check on save (cargo check)
--- republish stale positions; a diagnostic whose lines changed since is skipped.
+-- The lines each diagnostic sat on before any edit. rust-analyzer's flycheck (rustc, clippy) only
+-- re-checks on save and republishes stale positions; such a diagnostic whose lines changed is skipped.
 local function snapshot(buf)
   local seen = {}
   for _, d in ipairs(vim.diagnostic.get(buf)) do
@@ -435,7 +485,7 @@ local function next_diag(run)
   table.sort(diags, function(a, b) return a.lnum < b.lnum end)
   for _, d in ipairs(diags) do
     local text, id = covered(run.buf, d), ident(d)
-    local fresh = not run.seen[id] or run.seen[id][text]
+    local fresh = not run.seen[id] or run.seen[id][text] or not (d.source == "rustc" or d.source == "clippy")
     local key = id .. "\0" .. text
     if d.user_data and d.user_data.lsp and fresh and not run.tried[key] then return d, key end
   end
@@ -515,8 +565,8 @@ local function footer()
   vim.api.nvim_win_set_config(win, { footer = { { text, "AosFaint" } }, footer_pos = "left" })
 end
 
-local function show_hint(buf, row, entries)
-  local quick = vim.tbl_filter(function(e) return e.quick end, entries)
+local function show_hint(spot, entries)
+  local quick = fixes(entries)
   local best = vim.iter(quick):find(function(e) return e.preferred end) or quick[1]
   local chunks
   if best then
@@ -525,26 +575,35 @@ local function show_hint(buf, row, entries)
   elseif codex_ok() then
     chunks = { { "  ◆ ask codex to fix", "AosRunning" } }
   end
-  hint.last = { buf = buf, row = row, tick = vim.b[buf].changedtick, count = #quick }
+  hint.last = vim.tbl_extend("force", spot, { count = #quick })
   if not chunks then return end
   chunks[#chunks + 1] = { "  " .. KEY, "AosFaint" }
-  vim.api.nvim_buf_set_extmark(buf, ns, row, 0, { virt_text = chunks, virt_text_pos = "eol", hl_mode = "combine" })
+  vim.api.nvim__ns_set(ns, { wins = { vim.api.nvim_get_current_win() } })
+  -- Below vim.diagnostic's default 4096, so the hint sits right after the code, before the message.
+  vim.api.nvim_buf_set_extmark(spot.buf, ns, spot.row, 0, { virt_text = chunks, virt_text_pos = "eol", hl_mode = "combine", priority = 4000 })
   footer()
 end
 
-local function here(buf, row, tick)
-  return vim.api.nvim_get_current_buf() == buf and vim.fn.line(".") - 1 == row and vim.b[buf].changedtick == tick and vim.fn.mode() == "n"
+-- Still on the same buffer state, line and diagnostic under the cursor as `spot`.
+local function here(spot)
+  local buf = spot.buf
+  if vim.api.nvim_get_current_buf() ~= buf or vim.fn.mode() ~= "n" or vim.b[buf].changedtick ~= spot.tick then return false end
+  local c = at_cursor(buf)
+  return c.row == spot.row and c.key == spot.key
 end
 
 local function probe()
-  local buf, row = vim.api.nvim_get_current_buf(), vim.fn.line(".") - 1
-  if codex_job or vim.fn.mode() ~= "n" or not eligible(buf) or #line_diags(buf, row, row) == 0 then return end
-  local tick, gen = vim.b[buf].changedtick, hint.gen
+  local buf = vim.api.nvim_get_current_buf()
+  if codex_job or vim.fn.mode() ~= "n" or not eligible(buf) then return end
+  local c = at_cursor(buf)
+  if #c.diags == 0 then return end
+  local spot, gen = { buf = buf, row = c.row, key = c.key, tick = vim.b[buf].changedtick }, hint.gen
   hint.buf = buf
-  hint.cancel = request(buf, { first = row, last = row, only = { "quickfix" }, trigger = 2 }, function(entries)
+  local opts = { first = c.row, last = c.row, diags = c.diags, cursor = c.at, only = { "quickfix" }, trigger = 2 }
+  hint.cancel = request(buf, opts, function(entries)
     if gen ~= hint.gen then return end
     hint.cancel = nil
-    if here(buf, row, tick) then show_hint(buf, row, entries) end
+    if here(spot) then show_hint(spot, entries) end
   end)
 end
 
@@ -557,7 +616,7 @@ end
 function M.float(win)
   hint.float = win
   local last = hint.last
-  if last and here(last.buf, last.row, last.tick) then return footer() end
+  if last and here(last) then return footer() end
   schedule()
 end
 
@@ -577,7 +636,7 @@ function M.setup()
     group = group,
     callback = function()
       local last = hint.last
-      if not (last and here(last.buf, last.row, last.tick)) then schedule() end
+      if not (last and here(last)) then schedule() end
     end,
   })
   vim.api.nvim_create_autocmd({ "InsertEnter", "TextChanged", "BufLeave" }, { group = group, callback = function() clear_hint() end })
