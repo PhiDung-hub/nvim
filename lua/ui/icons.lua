@@ -31,10 +31,13 @@ local by_ext = {
   go = { "\u{e627}", code }, sql = { "\u{e706}", config },
   png = image, jpg = image, jpeg = image, gif = image, webp = image, ico = image, svg = { "\u{f0721}", meta },
   log = { "\u{f0331}", plain }, txt = { "\u{f0219}", plain }, lock = lock,
+  vim = { "\u{e62b}", code }, diff = { "\u{e728}", meta },
 }
 
 local by_name = {
   dockerfile = { "\u{f0868}", meta }, makefile = { "\u{e779}", meta },
+  terminal = { "\u{f489}", shell }, license = { "\u{e60a}", plain }, [".env"] = { "\u{f462}", config },
+  [".zshrc"] = sh, [".zshenv"] = sh, [".zprofile"] = sh, [".bashrc"] = sh, [".bash_profile"] = sh, [".profile"] = sh,
   ["package-lock.json"] = lock, ["yarn.lock"] = lock, ["pnpm-lock.yaml"] = lock, ["bun.lockb"] = lock,
   ["cargo.lock"] = lock, ["lazy-lock.json"] = lock, ["flake.lock"] = lock, ["uv.lock"] = lock, ["go.sum"] = lock,
 }
