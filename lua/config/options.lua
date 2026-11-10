@@ -55,7 +55,7 @@ opt.winborder = "single"
 opt.list = true
 -- Indent guides without a plugin.
 opt.listchars = { tab = "▏ ", leadmultispace = "▏ ", trail = "·", nbsp = "␣", extends = "…", precedes = "…" }
-opt.fillchars = { eob = " ", fold = " ", foldopen = "▾", foldclose = "▸", foldsep = " ", diff = "╌" }
+opt.fillchars = { eob = " ", fold = " ", foldopen = "▾", foldclose = "▸", foldsep = " ", foldinner = " ", diff = "╌" }
 
 opt.foldcolumn = "1"
 opt.foldlevel = 99
