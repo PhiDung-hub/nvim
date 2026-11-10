@@ -5,10 +5,6 @@
   "Lua.diagnostics.globals": [
     "vim"
   ],
-  "Lua.workspace.library": [
-    "${3rd}/luv/library",
-    "${3rd}/busted/library"
-  ],
   "Lua.workspace.checkThirdParty": false,
   "Lua.telemetry.enable": false
 }

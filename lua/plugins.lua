@@ -71,7 +71,7 @@ return {
   {
     "nvim-neo-tree/neo-tree.nvim",
     branch = "v3.x",
-    dependencies = { "MunifTanjim/nui.nvim", "nvim-tree/nvim-web-devicons" },
+    dependencies = { "nvim-lua/plenary.nvim", "MunifTanjim/nui.nvim", "nvim-tree/nvim-web-devicons" },
     cmd = "Neotree",
     keys = {
       { "<M-t>", "<cmd>Neotree left toggle<cr>", desc = "Tree" },
@@ -119,15 +119,6 @@ return {
         },
       },
       buffers = { follow_current_file = { enabled = true }, group_empty_dirs = true, show_unloaded = true },
-    },
-  },
-  {
-    "nvim-tree/nvim-web-devicons",
-    lazy = true,
-    opts = {
-      override = { zsh = { icon = "", color = "#9ece6a", name = "Zsh" } },
-      override_by_filename = { [".gitignore"] = { icon = "", color = "#f7768e", name = "Gitignore" } },
-      override_by_extension = { log = { icon = "", color = "#9aa0ab", name = "Log" } },
     },
   },
   {

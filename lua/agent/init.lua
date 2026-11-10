@@ -109,6 +109,7 @@ end
 -- One-line prompt float: ` ❯ btw · claude #4 `.
 local function input(title, cb)
   local buf = vim.api.nvim_create_buf(false, true)
+  vim.b[buf].completion = false
   local width = math.min(90, vim.o.columns - 6)
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "cursor", row = 1, col = 0, width = width, height = 1,

@@ -28,6 +28,7 @@ local function tabs(room)
     if is_current then current = i end
   end
   if #parts == 0 then return "" end
+  room = room - 8 -- keep space for the ‹n / n› overflow markers
   local first, last, used = current, current, widths[current]
   while true do
     local grew = false
@@ -35,7 +36,9 @@ local function tabs(room)
     if first > 1 and used + widths[first - 1] <= room then first, used, grew = first - 1, used + widths[first - 1], true end
     if not grew then break end
   end
-  return table.concat(parts, "%#TabLineFill# ", first, last)
+  local before = first > 1 and ("%%#AosDim#‹%d "):format(first - 1) or ""
+  local after = last < #parts and (" %%#AosDim#%d›"):format(#parts - last) or ""
+  return before .. table.concat(parts, "%#TabLineFill# ", first, last) .. after
 end
 
 local modes = { i = "insert", v = "visual", V = "v-line", ["\22"] = "v-block", R = "replace", c = "command", t = "term" }

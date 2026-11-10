@@ -20,7 +20,6 @@ au("BufReadPre", {
     vim.b[ev.buf].bigfile = big
     if not big then return end
     vim.bo[ev.buf].swapfile, vim.bo[ev.buf].undolevels = false, -1
-    vim.wo.foldmethod, vim.wo.list, vim.wo.spell = "manual", false, false
   end,
 })
 au("BufReadPost", {
@@ -28,6 +27,9 @@ au("BufReadPost", {
     if not vim.b[ev.buf].bigfile then return end
     pcall(vim.treesitter.stop, ev.buf)
     vim.bo[ev.buf].syntax = "off"
+    -- [0][0] = this window and buffer only (:setlocal); plain vim.wo would also change the global value.
+    local wo = vim.wo[0][0]
+    wo.foldmethod, wo.list, wo.spell = "manual", false, false
   end,
 })
 
@@ -43,9 +45,14 @@ au("VimLeavePre", {
   end,
 })
 _G.AosSession = function(last)
-  local cwd = last and (vim.fn.readfile(session_dir .. "last")[1]) or nil
+  local cwd
+  if last then
+    if not vim.uv.fs_stat(session_dir .. "last") then return vim.notify("○ no previous session") end
+    cwd = vim.fn.readfile(session_dir .. "last")[1]
+  end
   local file = session_file(cwd)
-  if vim.uv.fs_stat(file) then vim.cmd("silent! source " .. vim.fn.fnameescape(file)) end
+  if not vim.uv.fs_stat(file) then return vim.notify("○ no session for " .. vim.fn.fnamemodify(cwd or vim.fn.getcwd(), ":~")) end
+  vim.cmd("silent! source " .. vim.fn.fnameescape(file))
 end
 
 -- Indent guides follow the buffer's shiftwidth (listchars is window-local).

@@ -64,12 +64,15 @@ opt.foldmethod = "expr"
 opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
 opt.foldtext = ""
 
-vim.g.clipboard = {
-  name = "xsel",
-  copy = { ["+"] = "xsel --clipboard --input", ["*"] = "xsel --input" },
-  paste = { ["+"] = "xsel --clipboard --output", ["*"] = "xsel --output" },
-  cache_enabled = 0,
-}
+-- Wayland: nvim's own detection picks wl-copy; xsel only sees the XWayland clipboard there.
+if not (vim.env.WAYLAND_DISPLAY and vim.fn.executable("wl-copy") == 1) then
+  vim.g.clipboard = {
+    name = "xsel",
+    copy = { ["+"] = "xsel --clipboard --input", ["*"] = "xsel --input" },
+    paste = { ["+"] = "xsel --clipboard --output", ["*"] = "xsel --output" },
+    cache_enabled = 0,
+  }
+end
 
 vim.filetype.add({ extension = { mdx = "lsp_markdown", move = "move" } })
 vim.cmd.colorscheme("agentos")

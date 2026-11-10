@@ -35,7 +35,8 @@ local function tsc_cmd(dispatchers, config)
 end
 
 local function configure()
-  vim.lsp.config("*", { root_markers = { ".git" } })
+  -- One position encoding for every server, so copilot (UTF-16) and the rest agree on a shared buffer.
+  vim.lsp.config("*", { root_markers = { ".git" }, capabilities = { general = { positionEncodings = { "utf-16" } } } })
   vim.lsp.config("ts_ls", {
     root_dir = function(buf, on_dir)
       local root = ts_root(buf)
@@ -80,43 +81,16 @@ local function configure()
   })
 end
 
-local function peek_definition()
-  local params = vim.lsp.util.make_position_params(0, "utf-16")
-  vim.lsp.buf_request(0, "textDocument/definition", params, function(err, result)
-    if err or not result or vim.tbl_isempty(result) then return vim.notify("No definition", vim.log.levels.INFO) end
-    local loc = vim.islist(result) and result[1] or result
-    local uri, range = loc.targetUri or loc.uri, loc.targetRange or loc.range
-    local buf = vim.uri_to_bufnr(uri)
-    vim.fn.bufload(buf)
-    local win = vim.api.nvim_open_win(buf, true, {
-      relative = "cursor", row = 1, col = 0, width = math.min(100, vim.o.columns - 4), height = 15,
-      title = " ❯ peek " .. vim.fn.fnamemodify(vim.uri_to_fname(uri), ":~:.") .. " ", title_pos = "left",
-    })
-    vim.api.nvim_win_set_cursor(win, { range.start.line + 1, range.start.character })
-    vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, nowait = true })
-  end)
-end
-
 local function on_attach(ev)
   local client = vim.lsp.get_client_by_id(ev.data.client_id)
   local buf = ev.buf
   if not client then return end
   if vim.b[buf].bigfile then return vim.schedule(function() vim.lsp.buf_detach_client(buf, client.id) end) end
 
-  local pick = require("ui.pick")
-  local function map(lhs, rhs, desc) vim.keymap.set("n", lhs, rhs, { buffer = buf, desc = desc, nowait = true }) end
-  map("K", function() vim.lsp.buf.hover({ max_width = 90 }) end, "Hover")
-  map("gd", vim.lsp.buf.definition, "Definition")
-  map("gp", peek_definition, "Peek definition")
-  map("gr", vim.lsp.buf.rename, "Rename")
-  map("gf", pick.lsp_references, "References")
-  map("<leader>o", pick.lsp_symbols, "Outline")
-  map("<leader>li", vim.lsp.buf.incoming_calls, "Incoming calls")
-  map("<leader>lo", vim.lsp.buf.outgoing_calls, "Outgoing calls")
-  map("<leader>ca", vim.lsp.buf.code_action, "Code action")
-  map("<leader>lh", function()
+  require("ui.lsp").attach(buf, client)
+  vim.keymap.set("n", "<leader>lh", function()
     vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled({ bufnr = buf }), { bufnr = buf })
-  end, "Toggle inlay hints")
+  end, { buffer = buf, desc = "Toggle inlay hints" })
 
   if client:supports_method("textDocument/documentHighlight") then
     local group = vim.api.nvim_create_augroup("LspHighlight" .. buf, { clear = true })
@@ -136,13 +110,20 @@ function M.setup()
   vim.api.nvim_create_autocmd("LspAttach", { group = vim.api.nvim_create_augroup("CoreLsp", {}), callback = on_attach })
 
   local s = vim.diagnostic.severity
+  local glyphs = { [s.ERROR] = "✗", [s.WARN] = "!", [s.INFO] = "●", [s.HINT] = "·" }
+  local hls = { [s.ERROR] = "AosFailed", [s.WARN] = "AosRunning", [s.INFO] = "AosId", [s.HINT] = "AosDim" }
   vim.diagnostic.config({
     underline = true,
     severity_sort = true,
     virtual_text = { spacing = 4, prefix = "" },
-    float = { source = "if_many" },
-    signs = { text = { [s.ERROR] = "✗", [s.WARN] = "!", [s.INFO] = "●", [s.HINT] = "·" } },
+    float = {
+      source = "if_many", header = "", title = " ❯ diagnostics ", title_pos = "left",
+      prefix = function(d) return glyphs[d.severity] .. " ", hls[d.severity] end,
+    },
+    jump = { on_jump = function(_, bufnr) vim.diagnostic.open_float({ bufnr = bufnr, scope = "cursor", focus = false }) end },
+    signs = { text = glyphs },
   })
+  require("ui.lsp").setup()
 end
 
 return M

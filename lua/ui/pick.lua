@@ -1,7 +1,9 @@
 -- Minimal fuzzy picker in the Agent OS row grammar: `glyph · id · text`, prompt `❯ query`.
 -- Item: { text = string, id? = string, glyph? = string, hl? = group, data? = any }.
+-- `opts.preview` adds a right pane showing `data.filename`/`data.bufnr` at `data.lnum`.
 local M = {}
 local ns = vim.api.nvim_create_namespace("ui.pick")
+local pns = vim.api.nvim_create_namespace("ui.pick.preview")
 local SEP = " · "
 
 local function row(item)
@@ -24,13 +26,50 @@ local function paint(buf, line, item)
   end
 end
 
+local function rel(path) return vim.fn.fnamemodify(path, ":~:.") end
+
+local function item_buf(d)
+  if not d then return end
+  if d.bufnr and vim.api.nvim_buf_is_valid(d.bufnr) then return d.bufnr end
+  if d.filename and vim.uv.fs_stat(d.filename) then return vim.fn.bufadd(d.filename) end
+end
+
+-- Show the item's file around its line in `win`, the target line tinted.
+local function preview(win, item, state)
+  local buf = item_buf(item and item.data)
+  if state.buf and vim.api.nvim_buf_is_valid(state.buf) then vim.api.nvim_buf_clear_namespace(state.buf, pns, 0, -1) end
+  if not buf then return end
+  vim.fn.bufload(buf)
+  state.buf = buf
+  vim.api.nvim_win_set_buf(win, buf)
+  -- Showing a buffer copies its last window's local options; reset the ones a preview must not have.
+  local wo = vim.wo[win]
+  wo.winbar, wo.relativenumber, wo.number, wo.foldcolumn, wo.signcolumn, wo.foldenable = "", false, true, "0", "no", false
+  local lnum = math.max(1, math.min(item.data.lnum or 1, vim.api.nvim_buf_line_count(buf)))
+  vim.api.nvim_buf_set_extmark(buf, pns, lnum - 1, 0, { line_hl_group = "AosPreviewLine", priority = 200 })
+  vim.api.nvim_win_set_cursor(win, { lnum, 0 })
+  vim.api.nvim_win_call(win, function() vim.cmd("normal! zz") end)
+  local title = (" %s:%d "):format(rel(vim.api.nvim_buf_get_name(buf)), lnum)
+  vim.api.nvim_win_set_config(win, { title = title, title_pos = "left" })
+end
+
 function M.open(opts)
   local items, shown, index = opts.items, opts.items, 1
-  local width = math.min(110, vim.o.columns - 6)
-  local height = math.min(18, math.max(#items, 3), vim.o.lines - 8)
+  local total = math.min(opts.preview and 180 or 110, vim.o.columns - 6)
+  local width = opts.preview and math.floor(total * 0.45) or total
+  local height = opts.preview and math.min(22, vim.o.lines - 8) or math.min(18, math.max(#items, 3), vim.o.lines - 8)
   local row0 = math.floor((vim.o.lines - height) / 3)
-  local col0 = math.floor((vim.o.columns - width) / 2)
+  local col0 = math.floor((vim.o.columns - total) / 2)
   local pbuf, lbuf = vim.api.nvim_create_buf(false, true), vim.api.nvim_create_buf(false, true)
+  vim.b[pbuf].completion = false -- blink.cmp's buffer keymaps would shadow <CR>/<Down>/<Up>
+  local vwin, vstate
+  if opts.preview then
+    vstate = {}
+    vwin = vim.api.nvim_open_win(vim.api.nvim_create_buf(false, true), false, {
+      relative = "editor", row = row0, col = col0 + width + 2, width = total - width - 2, height = height + 3,
+      focusable = false, title = " preview ", title_pos = "left",
+    })
+  end
   local lwin = vim.api.nvim_open_win(lbuf, false, {
     relative = "editor", row = row0 + 3, col = col0, width = width, height = height, focusable = false,
     footer = (" %d items "):format(#items), footer_pos = "right",
@@ -54,22 +93,34 @@ function M.open(opts)
     index = math.max(1, math.min(index, #shown))
     if #shown > 0 then vim.api.nvim_win_set_cursor(lwin, { index, 0 }) end
     vim.api.nvim_win_set_config(lwin, { footer = (" %d/%d "):format(#shown, #items), footer_pos = "right" })
+    if vwin then preview(vwin, shown[index], vstate) end
   end
 
+  local last_query = ""
   local function filter()
     local query = vim.api.nvim_buf_get_lines(pbuf, 0, 1, false)[1] or ""
+    if query == last_query then return end
+    last_query = query
     shown = query == "" and items or vim.fn.matchfuzzy(items, query, { key = "text", limit = 500 })
     index = 1
     render()
   end
 
+  local done = false
   local function close()
+    if not done and opts.on_cancel then vim.schedule(opts.on_cancel) end
+    done = true
     vim.cmd.stopinsert()
-    for _, w in ipairs({ pwin, lwin }) do pcall(vim.api.nvim_win_close, w, true) end
+    if vstate and vstate.buf and vim.api.nvim_buf_is_valid(vstate.buf) then vim.api.nvim_buf_clear_namespace(vstate.buf, pns, 0, -1) end
+    for _, w in ipairs({ pwin, lwin, vwin }) do
+      if w then pcall(vim.api.nvim_win_close, w, true) end
+    end
   end
 
   local function choose()
+    filter() -- TextChangedI waits for typeahead to drain; fast typing reaches <CR> first.
     local item = shown[index]
+    done = true
     close()
     if item then vim.schedule(function() opts.on_choose(item) end) end
   end
@@ -78,6 +129,7 @@ function M.open(opts)
     return function()
       index = (index - 1 + delta) % math.max(#shown, 1) + 1
       if #shown > 0 then vim.api.nvim_win_set_cursor(lwin, { index, 0 }) end
+      if vwin then preview(vwin, shown[index], vstate) end
     end
   end
 
@@ -95,8 +147,9 @@ function M.open(opts)
   vim.cmd.startinsert()
 end
 
-local function jump(item)
+function M.jump(item)
   local d = item.data
+  vim.cmd("normal! m'")
   if d.bufnr and vim.api.nvim_buf_is_valid(d.bufnr) then
     vim.api.nvim_set_current_buf(d.bufnr)
   elseif d.filename then
@@ -104,8 +157,6 @@ local function jump(item)
   end
   if d.lnum then pcall(vim.api.nvim_win_set_cursor, 0, { d.lnum, math.max((d.col or 1) - 1, 0) }) end
 end
-
-local function rel(path) return vim.fn.fnamemodify(path, ":~:.") end
 
 function M.buffers()
   local items = {}
@@ -116,7 +167,7 @@ function M.buffers()
       data = { bufnr = info.bufnr, lnum = info.lnum },
     }
   end
-  M.open({ title = "buffers", items = items, on_choose = jump })
+  M.open({ title = "buffers", items = items, on_choose = M.jump })
 end
 
 function M.help()
@@ -141,10 +192,11 @@ function M.diagnostics()
     }
   end
   table.sort(items, function(a, b) return a.data.severity < b.data.severity end)
-  M.open({ title = "diagnostics", items = items, on_choose = jump })
+  M.open({ title = "diagnostics", items = items, on_choose = M.jump, preview = true })
 end
 
-local function from_qf(title)
+-- on_list handler for vim.lsp.buf.* location requests: one result jumps, more open a previewed list.
+function M.list(title)
   return function(res)
     local items = vim.tbl_map(function(e)
       return {
@@ -152,13 +204,23 @@ local function from_qf(title)
         hl = "AosArg", data = e,
       }
     end, res.items)
-    if #items == 1 then return jump(items[1]) end
-    M.open({ title = title, items = items, on_choose = jump })
+    if #items == 1 then return M.jump(items[1]) end
+    M.open({ title = title, items = items, on_choose = M.jump, preview = true })
   end
 end
 
-function M.lsp_references() vim.lsp.buf.references(nil, { on_list = from_qf("references") }) end
-
-function M.lsp_symbols() vim.lsp.buf.document_symbol({ on_list = from_qf("symbols") }) end
+-- vim.ui.select (code actions, LSP choices, any plugin) through the picker.
+function M.select(choices, opts, on_choice)
+  opts = opts or {}
+  local fmt = opts.format_item or tostring
+  local items = {}
+  for i, c in ipairs(choices) do items[i] = { glyph = tostring(i), hl = "AosDim", text = fmt(c), data = { choice = c, idx = i } } end
+  M.open({
+    title = (opts.prompt or "select"):gsub("[:%s]+$", ""):lower(),
+    items = items,
+    on_choose = function(item) on_choice(item.data.choice, item.data.idx) end,
+    on_cancel = function() on_choice(nil, nil) end,
+  })
+end
 
 return M

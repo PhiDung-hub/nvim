@@ -24,7 +24,8 @@ lua/core/treesitter.lua  FileType → vim.treesitter.start + indentexpr (size-gu
 lua/core/format.lua      external formatters + LSP fallback, solhint diagnostics
 lua/core/edit.lua        autopairs, tag auto-close, #rrggbb swatches
 lua/core/git.lua         index-diff signs, branch for the tabline
-lua/ui/pick.lua          fuzzy picker (buffers, help, diagnostics, references, symbols)
+lua/ui/pick.lua          fuzzy picker with optional preview pane; also vim.ui.select
+lua/ui/lsp.lua           LSP/syntax UI: hover, peek, finder, outline, breadcrumbs, rename, calls, inspect
 lua/ui/tabline.lua       buffers + status segments
 lua/ui/term.lua          float terminal
 lua/agent/               Claude/Codex co-working (below)
@@ -32,7 +33,7 @@ lua/agent/               Claude/Codex co-working (below)
 
 ## Plugins (lua/plugins.lua)
 
-blink.cmp, nvim-lspconfig (server defaults only), mason.nvim (installer only, on `:Mason`; `mason/bin` is prepended to PATH in options.lua), nvim-treesitter (**main** branch), neo-tree (+nui, web-devicons), fff, render-markdown, lean.nvim.
+blink.cmp, nvim-lspconfig (server defaults only), mason.nvim (installer only, on `:Mason`; `mason/bin` is prepended to PATH in options.lua), nvim-treesitter (**main** branch), neo-tree (+plenary, nui, web-devicons; neo-tree's filesystem source requires plenary), fff, render-markdown, lean.nvim.
 
 Replaced locally: bufferline/lualine → `ui/tabline`; telescope/lspsaga → `ui/pick` + native LSP; toggleterm → `ui/term`; gitsigns → `core/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`.
 
@@ -45,7 +46,16 @@ Dropped: codecompanion (superseded by `lua/agent`), which-key, todo-comments (th
 - **TypeScript routing:** a root with `node_modules/typescript/lib/tsserver.js` (TS ≤ 5) uses `ts_ls`. Any other root uses `tsc --lsp --stdio`, TypeScript 7's native server, preferring the project's local binary. The global TypeScript here is 7.x and ships no tsserver.js, which is why `ts_ls` alone failed.
 - **Rust:** rustup's `~/.cargo/bin/rust-analyzer` (matches the toolchain; Mason's standalone build may not), with clippy checks.
 - `move_analyzer` needs a `Move.toml` (`workspace_required`).
-- Keys: `K` hover, `gd` definition, `gp` peek, `gr` rename, `gf` references, `<leader>o` symbols, `<leader>li`/`<leader>lo` calls, `<leader>ca` action, `<leader>lh` inlay hints.
+- UI lives in `lua/ui/lsp.lua` (replaces lspsaga), all floats titled ` ❯ verb `:
+  - `K` hover · `gd` definition (several → previewed list) · `gp` peek: editable float, `<CR>` opens it, `q` closes
+  - `gf` finder: definitions ◆, implementations ◇ and references ● in one previewed list; a location keeps its strongest kind
+  - `<leader>o` outline sidebar (right, follows the cursor and the focused LSP buffer, previews on move, closes when last)
+  - breadcrumbs winbar ` ❯ dir/file › ◇ Class › ƒ method ` in LSP buffers (documentSymbol, refreshed 350 ms after edits)
+  - `gr` rename float (name preselected; typing replaces) · `<leader>li`/`<leader>lo` incoming/outgoing calls · `<leader>ca` code action
+  - `<leader>i` inspect: treesitter captures, semantic tokens, syntax and extmark groups with resolved colours, plus the node path · `<leader>I` syntax tree
+  - `]d`/`[d` jump and show the diagnostics float · `<leader>lh` inlay hints
+- `vim.ui.select` goes through `ui/pick`. Prompt floats set `vim.b.completion = false`, or blink.cmp's buffer keymaps shadow their `<CR>`/`<Down>`/`<Up>`.
+- TypeScript 7's `tsc --lsp` returns no definition at a `new Class()` call site (only an implementation); the finder shows what the server returns.
 
 ## Agent co-working (lua/agent)
 

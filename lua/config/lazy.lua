@@ -9,6 +9,7 @@ require("lazy").setup("plugins", {
   install = { colorscheme = { "agentos" } },
   ui = { border = "single", backdrop = 100 },
   change_detection = { notify = false },
+  rocks = { enabled = false },
   performance = {
     rtp = { disabled_plugins = { "gzip", "matchit", "netrwPlugin", "tarPlugin", "tohtml", "tutor", "zipPlugin" } },
   },
