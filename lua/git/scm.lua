@@ -189,14 +189,17 @@ end
 
 local function has_changes(s) return s and #s.changes + #s.staged + #s.conflicts > 0 end
 
+local function listed(key)
+  for _, r in ipairs(S.rows) do
+    if r.entry and key == S.root .. ":" .. r.section .. ":" .. r.entry.path then return true end
+  end
+end
+
 local function preview(focus)
   if not visible() then return end
   local row = S.rows[vim.api.nvim_win_get_cursor(S.win)[1]]
   if row and row.entry then return diff.show(S.root, row.entry, row.section, { focus = focus }) end
-  local key = diff.key()
-  for _, r in ipairs(S.rows) do
-    if r.entry and key == S.root .. ":" .. r.section .. ":" .. r.entry.path then return diff.reload() end
-  end
+  if listed(diff.key()) then return diff.reload() end
   local msg = not S.root and "○ not a git repository" or not S.status and "◆ git status"
   diff.message(msg or has_changes(S.status) and "○ no file under the cursor" or "✓ working tree clean")
 end
@@ -225,7 +228,8 @@ local function render()
   local target, focus = landing(ctx.rows)
   S.rows = ctx.rows
   vim.api.nvim_win_set_cursor(S.win, { target, 0 })
-  if focus or not vim.tbl_contains(diff.wins(), vim.api.nvim_get_current_win()) then preview(focus) end
+  if focus or not vim.tbl_contains(diff.wins(), vim.api.nvim_get_current_win()) then return preview(focus) end
+  if listed(diff.key()) then diff.reload() end
 end
 
 -- Refresh and watchers ---------------------------------------------------------------------
@@ -316,30 +320,77 @@ local function collect(rows)
   return out
 end
 
+local function confirm(prompt, yes, fn)
+  vim.ui.select({ yes, "Cancel" }, { prompt = prompt }, function(choice)
+    if choice == yes then fn() end
+  end)
+end
+
+local function has_markers(e)
+  local ok, lines = pcall(vim.fn.readfile, S.root .. "/" .. e.path)
+  for _, l in ipairs(ok and lines or {}) do
+    if l:match("^<<<<<<< ") or l:match("^>>>>>>> ") then return true end
+  end
+  return false
+end
+
 local function stage(sel)
   local list = vim.list_extend(vim.list_extend({}, sel.changes), sel.conflicts)
   if #list == 0 then return notify("○ nothing to stage") end
-  run(cmd({ "add" }, list), "git add")
+  local marked = vim.tbl_filter(has_markers, sel.conflicts)
+  if #marked == 0 then return run(cmd({ "add" }, list), "git add") end
+  local what = #marked == 1 and marked[1].path or #marked .. " files"
+  confirm(("Stage %s with merge conflicts?"):format(what), "Stage", function() run(cmd({ "add" }, list), "git add") end)
 end
 
 local function unstage(sel)
   if #sel.staged == 0 then return notify("○ nothing to unstage") end
   local initial = S.status.oid == "(initial)"
-  run(cmd(initial and { "rm", "--cached", "--quiet" } or { "restore", "--staged" }, sel.staged, true), "git restore --staged")
+  local args = initial and { "rm", "--cached", "-f", "--quiet" } or { "restore", "--staged" }
+  run(cmd(args, sel.staged, true), initial and "git rm --cached" or "git restore --staged")
+end
+
+-- Loaded buffers by real path: a symlinked checkout names the same file differently.
+local function loaded_bufs()
+  local out = {}
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(b)
+    if vim.api.nvim_buf_is_loaded(b) and name ~= "" then out[vim.uv.fs_realpath(name) or name] = b end
+  end
+  return out
+end
+
+local function buf_for(bufs, e)
+  local path = S.root .. "/" .. e.path
+  return bufs[vim.uv.fs_realpath(path) or path]
+end
+
+-- Discard also reverts the open editor, or a later :w would write the discarded edits back.
+local function reload_bufs(list)
+  local bufs = loaded_bufs()
+  for _, e in ipairs(list) do
+    local b = buf_for(bufs, e)
+    if b then vim.api.nvim_buf_call(b, function() vim.cmd("silent edit!") end) end
+  end
+end
+
+-- From a window showing it: nvim_buf_delete quietly keeps a buffer that fills the last ordinary window.
+local function wipe(b)
+  local w = vim.fn.win_findbuf(b)[1]
+  if not w then return pcall(vim.api.nvim_buf_delete, b, { force = true }) end
+  vim.api.nvim_win_call(w, function() vim.cmd("silent! bwipeout! " .. b) end)
 end
 
 local function delete_untracked(list)
+  local bufs = loaded_bufs()
   for _, e in ipairs(list) do
+    local b = buf_for(bufs, e)
     local ok, err = os.remove(S.root .. "/" .. e.path)
     if not ok then fail("delete " .. e.path, err) end
+    if ok and b and diff.key() == S.root .. ":changes:" .. e.path then diff.message("○ " .. e.path .. " deleted") end
+    if ok and b then wipe(b) end
   end
   refresh()
-end
-
-local function confirm(prompt, yes, fn)
-  vim.ui.select({ yes, "Cancel" }, { prompt = prompt }, function(choice)
-    if choice == yes then fn() end
-  end)
 end
 
 local function discard(sel)
@@ -351,7 +402,7 @@ local function discard(sel)
   local prompt = #untracked > 0 and ("Discard changes and DELETE untracked in %s? This is irreversible"):format(what)
     or ("Discard changes in %s?"):format(what)
   confirm(prompt, "Discard", function()
-    if #tracked > 0 then run(cmd({ "restore", "--worktree" }, tracked), "git restore") end
+    if #tracked > 0 then run(cmd({ "restore", "--worktree" }, tracked), "git restore", function() reload_bufs(tracked) end) end
     if #untracked > 0 then delete_untracked(untracked) end
   end)
 end
@@ -399,6 +450,7 @@ local function commit(root, msg, amend, done)
   if amend then return do_commit(root, msg, true, done) end
   repo.status(root, function(s)
     if not s then return notify("✗ git status failed", vim.log.levels.ERROR) end
+    if #s.conflicts > 0 then return notify("✗ resolve merge conflicts first (s on a Merge Changes row marks it resolved)", vim.log.levels.WARN) end
     if #s.staged > 0 then return do_commit(root, msg, false, done) end
     if #s.changes == 0 then return notify("○ nothing to commit") end
     confirm("Stage all changes and commit?", "Stage all and commit", function() stage_all_and_commit(root, msg, done) end)
@@ -617,6 +669,43 @@ function M.diff_current()
   M.open({ root = root, path = repo.relative(root, file) })
 end
 
+-- Shell-like words: '…' literal, "…" with \" \\ \$ \` escapes, \x outside quotes.
+local function dquoted(s, i)
+  local out = {}
+  while i <= #s and s:sub(i, i) ~= '"' do
+    local esc = s:sub(i, i) == "\\" and s:sub(i + 1, i + 1):match('["\\$`]')
+    out[#out + 1] = esc or s:sub(i, i)
+    i = i + (esc and 2 or 1)
+  end
+  return table.concat(out), i + 1
+end
+
+local function segment(s, i)
+  local c = s:sub(i, i)
+  if c == '"' then return dquoted(s, i + 1) end
+  if c == "\\" then return s:sub(i + 1, i + 1), i + 2 end
+  if c == "'" then
+    local j = s:find("'", i + 1, true) or #s + 1
+    return s:sub(i + 1, j - 1), j + 1
+  end
+  local j = s:find("[%s'\"\\]", i) or #s + 1
+  return s:sub(i, j - 1), j
+end
+
+local function words(s)
+  local out, i = {}, s:find("%S")
+  while i do
+    local word, seg = {}, nil
+    while i <= #s and not s:sub(i, i):match("%s") do
+      seg, i = segment(s, i)
+      word[#word + 1] = seg
+    end
+    out[#out + 1] = table.concat(word)
+    i = s:find("%S", i)
+  end
+  return out
+end
+
 -- `:Git <args>`: any git command, async, output in a float.
 local function passthrough(args)
   local root = S.root and visible() and S.root or current_root() or vim.fn.getcwd()
@@ -644,8 +733,9 @@ end
 
 function M.setup()
   vim.api.nvim_create_user_command("Git", function(o)
-    if #o.fargs == 0 then return M.toggle() end
-    passthrough(o.fargs)
+    local args = words(o.args)
+    if #args == 0 then return M.toggle() end
+    passthrough(args)
   end, { nargs = "*", desc = "Source Control popup, or run git <args>" })
   vim.keymap.set("n", "<leader>gg", M.toggle, { desc = "Source Control" })
   vim.keymap.set("n", "<leader>gd", M.diff_current, { desc = "Diff current file" })

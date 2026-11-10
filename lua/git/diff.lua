@@ -1,11 +1,12 @@
 -- Diff pane of the git popup: old version (scratch) beside the new one (working file or index scratch) with
 -- :diffthis when wide enough, else one float with the old lines as virtual lines. Hunks are staged with
--- zero-context patches (`git apply --cached --unidiff-zero`).
+-- 3-line-context patches built from a fresh read of the index, so git refuses one that no longer fits.
 local repo = require("git.repo")
 local M = {}
 local ns = vim.api.nvim_create_namespace("git.diff")
 local DIFFOPT = "internal,filler,closeoff,indent-heuristic,inline:char,linematch:60,algorithm:histogram"
 local SIDE_BY_SIDE = 120
+local CONTEXT = 3
 local D = { wins = {}, scratch = {}, mapped = {}, gen = 0 }
 
 local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, { title = "git" }) end
@@ -33,25 +34,41 @@ local function hunk_at(old, new, lnum)
   end
 end
 
-local function side(out, sign, lines, eol, from, count)
-  for i = from, from + count - 1 do
+-- `last`: nothing follows these lines in the result, so a missing final newline is real.
+local function side(out, sign, lines, eol, from, to, last)
+  for i = from, to do
     out[#out + 1] = sign .. lines[i]
-    if i == #lines and not eol then out[#out + 1] = "\\ No newline at end of file" end
+    if i == #lines and not eol and last then out[#out + 1] = "\\ No newline at end of file" end
   end
 end
 
-local function patch(path, old, new, lnum)
+-- One hunk with context taken from the text git applies it to (old, or new for `apply -R`).
+local function patch(path, old, new, lnum, reverse)
   local h = hunk_at(old, new, lnum)
   if not h then return end
   local as, ac, bs, bc = unpack(h)
   local a, a_eol = split(old)
   local b, b_eol = split(new)
+  local base, eol, at, n = a, a_eol, as, ac
+  if reverse then base, eol, at, n = b, b_eol, bs, bc end
+  -- Appending after a last line without its newline changes that line too.
+  if n == 0 and at == #base and at > 0 and not eol then
+    if reverse then bs, bc, as, ac = at, 1, as - 1, ac + 1 else as, ac, bs, bc = at, 1, bs - 1, bc + 1 end
+    n = 1
+  end
+  local first = n == 0 and at + 1 or at
+  local from, to = math.max(1, first - CONTEXT), math.min(#base, first + n - 1 + CONTEXT)
+  local ctx = (first - from) + (to - first - n + 1)
+  local function range(count) return (count == 0 and from - 1 or from) .. "," .. count end
   local out = {
     ("diff --git a/%s b/%s"):format(path, path), "--- a/" .. path, "+++ b/" .. path,
-    ("@@ -%d,%d +%d,%d @@"):format(as, ac, ac == 0 and as + 1 or bc == 0 and as - 1 or as, bc),
+    ("@@ -%s +%s @@"):format(range(ctx + ac), range(ctx + bc)),
   }
-  side(out, "-", a, a_eol, as, ac)
-  side(out, "+", b, b_eol, bs, bc)
+  local last = first + n - 1 >= #base
+  side(out, " ", base, eol, from, first - 1, true)
+  side(out, "-", a, a_eol, as, as + ac - 1, last)
+  side(out, "+", b, b_eol, bs, bs + bc - 1, last)
+  side(out, " ", base, eol, first + n, to, true)
   return table.concat(out, "\n") .. "\n"
 end
 
@@ -174,14 +191,21 @@ end
 -- Keys ---------------------------------------------------------------------------------------
 
 local function after_apply()
+  D.applying = false
   M.reload()
   if D.opts then D.opts.refresh() end
 end
 
-local function apply(p, args)
-  if not p then return notify("○ no change under the cursor") end
-  repo.run(vim.list_extend({ "apply", "--cached", "--unidiff-zero" }, args), D.t.root, function(ok, _, err)
-    if not ok then return notify("✗ git apply · " .. vim.trim(err):gsub("\n.*", ""), vim.log.levels.ERROR) end
+local function apply_failed(what, err)
+  D.applying = false
+  if not err then return notify("○ " .. what) end
+  notify("✗ " .. what .. " · " .. vim.trim(err):gsub("\n.*", ""), vim.log.levels.ERROR)
+end
+
+local function apply(root, p, args)
+  if not p then return apply_failed("no change under the cursor") end
+  repo.run(vim.list_extend({ "apply", "--cached" }, args), root, function(ok, _, err)
+    if not ok then return apply_failed("git apply", err) end
     after_apply()
   end, { stdin = p })
 end
@@ -189,8 +213,9 @@ end
 local function cursor() return vim.api.nvim_win_get_cursor(D.wins.new)[1] end
 
 local function stage_file(t)
+  D.applying = true
   repo.run({ "--literal-pathspecs", "add", "--", t.path }, t.root, function(ok, _, err)
-    if not ok then return notify("✗ git add · " .. vim.trim(err):gsub("\n.*", ""), vim.log.levels.ERROR) end
+    if not ok then return apply_failed("git add", err) end
     after_apply()
   end)
 end
@@ -198,18 +223,29 @@ end
 -- VS Code stages from the saved file, so the buffer is written first.
 local function stage_hunk()
   local t = D.t
+  if D.applying then return end
   if t.staged then return notify("○ staged diff: u unstages a hunk") end
   if t.plain then return notify("○ merge conflict: resolve it, then s in the list marks it resolved") end
   if not t.real or t.entry.letter == "U" then return stage_file(t) end
   if vim.bo[t.real].modified then vim.api.nvim_buf_call(t.real, function() vim.cmd("silent write") end) end
-  local disk = table.concat(vim.fn.readfile(vim.api.nvim_buf_get_name(t.real), "b"), "\n")
-  apply(patch(t.path, t.old, disk, cursor()), { "-" })
+  local disk, lnum = table.concat(vim.fn.readfile(vim.api.nvim_buf_get_name(t.real), "b"), "\n"), cursor()
+  D.applying = true
+  repo.show(t.root, "", t.path, function(index)
+    apply(t.root, patch(t.path, index or "", disk, lnum), { "-" })
+  end)
 end
 
 local function unstage_hunk()
   local t = D.t
+  if D.applying then return end
   if not t.staged then return notify("○ only a staged diff unstages hunks") end
-  apply(patch(t.path, t.old, t.new, cursor()), { "-R", "-" })
+  local lnum = cursor()
+  D.applying = true
+  repo.show(t.root, "HEAD", t.old_path, function(head)
+    repo.show(t.root, "", t.path, function(index)
+      apply(t.root, patch(t.path, head or "", index or "", lnum, true), { "-R", "-" })
+    end)
+  end)
 end
 
 local function revert_hunk()
@@ -255,26 +291,27 @@ local KEYS = {
 M.KEYS = KEYS
 
 -- The working file keeps its own buffer-local mappings outside the popup: they are saved and restored.
-local function map(buf)
+-- It also keeps native `u` (undo): only the index scratch buffers unstage hunks.
+local function map(buf, real)
   if D.mapped[buf] then return end
-  local saved = {}
+  local saved, keys = {}, vim.tbl_filter(function(k) return not (real and k[1] == "u") end, KEYS)
   vim.api.nvim_buf_call(buf, function()
-    for _, k in ipairs(KEYS) do
+    for _, k in ipairs(keys) do
       local old = vim.fn.maparg(k[1], "n", false, true)
       if old.buffer == 1 then saved[#saved + 1] = old end
       vim.keymap.set("n", k[1], k[2], { buffer = buf, nowait = true, desc = k[3] })
     end
   end)
-  D.mapped[buf] = saved
+  D.mapped[buf] = { saved = saved, keys = keys }
 end
 
 local function unmap(buf)
-  local saved = D.mapped[buf]
+  local m = D.mapped[buf]
   D.mapped[buf] = nil
-  if not saved or not vim.api.nvim_buf_is_valid(buf) then return end
+  if not m or not vim.api.nvim_buf_is_valid(buf) then return end
   vim.api.nvim_buf_call(buf, function()
-    for _, k in ipairs(KEYS) do pcall(vim.keymap.del, "n", k[1], { buffer = buf }) end
-    for _, m in ipairs(saved) do vim.fn.mapset(m) end
+    for _, k in ipairs(m.keys) do pcall(vim.keymap.del, "n", k[1], { buffer = buf }) end
+    for _, old in ipairs(m.saved) do vim.fn.mapset(old) end
   end)
 end
 
@@ -311,7 +348,7 @@ local function render(t, focus, keep)
   if not t.inline then set_buf(D.wins.old, fill(scratch("old"), t.old, t.path)) end
   set_buf(D.wins.new, t.real or fill(scratch("new"), t.new, t.path))
   if prev and prev.real and prev.real ~= t.real then release(prev) end
-  for _, b in pairs({ D.scratch.old, D.scratch.new, t.real }) do map(b) end
+  for _, b in pairs({ D.scratch.old, D.scratch.new, t.real }) do map(b, b == t.real) end
   diff_mode(t.inline)
   vim.wo[D.wins.new].number = not t.message
   titles(t, t.inline)
@@ -406,7 +443,7 @@ function M.close()
     pcall(vim.api.nvim_buf_delete, b, { force = true })
   end
   if D.diffopt then vim.o.diffopt = D.diffopt end
-  D.t, D.rect, D.opts, D.scratch, D.diffopt = nil, nil, nil, {}, nil
+  D.t, D.rect, D.opts, D.scratch, D.diffopt, D.applying = nil, nil, nil, {}, nil, false
   D.gen = D.gen + 1
 end
 
