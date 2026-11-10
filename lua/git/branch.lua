@@ -6,6 +6,22 @@ local pick = require("ui.pick")
 M.click_target = "v:lua.AosGitBranchClick"
 M.TAG = "\u{f412}"
 
+-- The picker's keys come from ui.pick; its fuzzy filter matches branch names only.
+M.keys = {
+  {
+    section = "Branch picker",
+    keys = {
+      { "<CR>", "check out (asks stash · carry over · cancel when local changes block it)" },
+      { "<Down>", "next" },
+      { "<C-n>", "next" },
+      { "<Up>", "previous" },
+      { "<C-p>", "previous" },
+      { "<Esc>", "close" },
+      { "<C-c>", "close" },
+    },
+  },
+}
+
 local FORMAT = "%(refname)%00%(objectname:short)%00%(upstream:track,nobracket)%00%(committerdate:relative)%00%(HEAD)"
 
 -- Git root for the current buffer (a git view's own root, the file's repo, else the cwd's).
@@ -13,6 +29,10 @@ function M.root()
   if vim.b.git_root then return vim.b.git_root end
   local name = vim.bo.buftype == "" and vim.api.nvim_buf_get_name(0) or ""
   return name ~= "" and repo.root(name) or repo.root()
+end
+
+local function head(text, n)
+  return table.concat(vim.list_slice(vim.split(vim.trim(text), "\n", { plain = true }), 1, n), "\n")
 end
 
 local function fail(verb, err)
@@ -26,13 +46,10 @@ local function changed(root)
   vim.api.nvim_exec_autocmds("User", { pattern = "GitChanged", data = { root = root } })
 end
 
-local function run(root, verb, args, done_msg, cb)
-  repo.run(args, root, function(ok, _, err)
-    if not ok then return fail(verb, err) end
-    vim.notify("✓ " .. done_msg)
-    changed(root)
-    if cb then cb() end
-  end)
+local function done(root, msg, cb)
+  vim.notify("✓ " .. msg)
+  changed(root)
+  if cb then cb() end
 end
 
 -- `switch` never reads its argument as a pathspec, unlike `checkout <name>` for a branch that no longer exists.
@@ -42,14 +59,122 @@ local function switch_args(t)
   return { "switch", "-q", "--detach", t.kind == "tag" and "refs/tags/" .. t.name or t.name }
 end
 
--- target = { kind = "local"|"remote"|"tag"|"detached", name }; a remote checks out its existing local branch,
--- else creates a tracking one.
-function M.checkout(root, target, cb)
+local function label(t)
+  if t.kind == "detached" then return t.name:sub(1, 7) .. " (detached)" end
+  if t.kind == "tag" then return "tag " .. t.name .. " (detached)" end
+  return t.name
+end
+
+local function message(t)
+  if t.short then return ("checked out %s · new local branch tracking %s"):format(t.short, t.name) end
+  if t.remote then return ("checked out %s · existing local branch of %s"):format(t.name, t.remote) end
+  return "checked out " .. label(t)
+end
+
+-- cb(true) when tracked or untracked files differ from HEAD.
+function M.dirty(root, cb)
+  repo.run({ "status", "--porcelain" }, root, function(ok, out) cb(ok and out ~= "") end, { feature = "checkout" })
+end
+
+-- Pops only the entry this checkout made (`sha`), never an older stash that is now stash@{0}.
+local function pop(root, sha, args, cb)
+  repo.run({ "rev-parse", "-q", "--verify", "stash@{0}" }, root, function(ok, out)
+    if not (ok and vim.trim(out) == sha) then return cb(false, "", "stash@{0} is no longer the checkout's stash " .. sha:sub(1, 7)) end
+    repo.run(vim.list_extend(args, { "stash@{0}" }), root, cb)
+  end, { feature = "checkout" })
+end
+
+-- Reports after the pop, since the error's hit-enter prompt would hold the pop back until a key is pressed.
+local function unstash(root, sha, why)
+  pop(root, sha, { "stash", "pop", "--index" }, function(ok, _, err)
+    fail("checkout", vim.trim(why) .. (ok and "\n○ your changes are back" or "\n✗ stash pop failed, your changes stay in the stash\n" .. vim.trim(err)))
+    changed(root)
+  end)
+end
+
+local function carry(root, sha, msg, cb)
+  pop(root, sha, { "stash", "pop" }, function(ok, out, err)
+    if ok then return done(root, msg .. " · changes carried over", cb) end
+    vim.notify(("! %s · carried changes conflict: resolve them, the stash is kept\n%s"):format(msg, head(err .. out, 3)), vim.log.levels.WARN)
+    changed(root)
+  end)
+end
+
+-- Like VS Code's Stash & Checkout (`migrate` false) and Migrate Changes (true); a switch that still fails puts
+-- the stash back where it came from.
+local function stashed(root, t, msg, sha, migrate, cb)
+  repo.run(switch_args(t), root, function(ok, _, err)
+    if not ok then return unstash(root, sha, err) end
+    if migrate then return carry(root, sha, msg, cb) end
+    done(root, msg .. " · changes stashed (git stash pop brings them back)", cb)
+  end)
+end
+
+local function stash_top(root, cb)
+  repo.run({ "rev-parse", "-q", "--verify", "refs/stash" }, root, function(ok, out) cb(ok and vim.trim(out) or nil) end, { feature = "checkout" })
+end
+
+-- `stash push` exits 0 having saved nothing (e.g. only a submodule moved); then there is no entry to pop and
+-- the switch's own error stands.
+local function pushed(root, t, msg, why, before, migrate, cb)
+  stash_top(root, function(sha)
+    if not sha or sha == before then return fail("checkout · nothing to stash", why) end
+    stashed(root, t, msg, sha, migrate, cb)
+  end)
+end
+
+local function stash_switch(root, t, msg, why, migrate, cb)
+  stash_top(root, function(before)
+    repo.run({ "stash", "push", "--include-untracked", "-m", "before checkout " .. label(t) }, root, function(ok, _, err)
+      if not ok then return fail("stash", err) end
+      pushed(root, t, msg, why, before, migrate, cb)
+    end)
+  end)
+end
+
+local function blocked(root, t, msg, err, cb)
+  local why = head(err, 8)
+  local choice = vim.fn.confirm(("Local changes block checking out %s\n%s"):format(label(t), why), "&Stash && checkout\nCarry &over changes\n&Cancel", 3)
+  if choice == 1 or choice == 2 then stash_switch(root, t, msg, err, choice == 2, cb) end
+end
+
+local function switch(root, t, cb)
+  repo.run(switch_args(t), root, function(ok, _, err)
+    if ok then return done(root, message(t), cb) end
+    M.dirty(root, function(dirty)
+      if not dirty then return fail("checkout", err) end
+      blocked(root, t, message(t), err, cb)
+    end)
+  end)
+end
+
+-- A remote checks out its existing local branch, else creates a tracking one (t.short).
+local function resolve(root, target, cb)
   local short = target.kind == "remote" and target.name:match("^[^/]+/(.+)$")
-  if not short then return run(root, "checkout", switch_args(target), "checked out " .. target.name, cb) end
+  if not short then return cb(target) end
   repo.run({ "show-ref", "--verify", "-q", "refs/heads/" .. short }, root, function(exists)
-    local t = exists and { kind = "local", name = short } or target
-    run(root, "checkout", switch_args(t), "checked out " .. t.name, cb)
+    cb(exists and { kind = "local", name = short, remote = target.name } or { kind = "remote", name = target.name, short = short })
+  end, { feature = "checkout" })
+end
+
+-- cb(true) when HEAD already is the target, so a switch would change nothing.
+local function already(root, t, cb)
+  if t.short then return cb(false) end
+  local rev = t.kind == "local" and "refs/heads/" .. t.name or t.kind == "tag" and "refs/tags/" .. t.name or t.name
+  repo.run({ "rev-parse", "HEAD", rev .. "^{commit}", "--symbolic-full-name", "HEAD" }, root, function(ok, out)
+    local head, sha, ref = unpack(vim.split(vim.trim(out), "\n", { plain = true }))
+    if t.kind == "local" then return cb(ok and ref == "refs/heads/" .. t.name) end
+    cb(ok and ref == "HEAD" and head == sha)
+  end, { feature = "checkout" })
+end
+
+-- target = { kind = "local"|"remote"|"tag"|"detached", name }.
+function M.checkout(root, target, cb)
+  resolve(root, target, function(t)
+    already(root, t, function(yes)
+      if yes then return vim.notify("○ already on " .. label(t)) end
+      switch(root, t, cb)
+    end)
   end)
 end
 
@@ -57,48 +182,54 @@ function M.create(name, from, root, cb)
   root = root or M.root()
   name = vim.trim(name or ""):gsub("%s+", "-")
   if name == "" then return end
-  run(root, "branch", { "switch", "-q", "-c", name, from }, "created " .. name .. (from and " from " .. from or ""), cb)
-end
-
--- cb(true) when tracked files differ from HEAD.
-function M.dirty(root, cb)
-  repo.run({ "status", "--porcelain", "--untracked-files=no" }, root, function(ok, out) cb(ok and out ~= "") end)
+  repo.run({ "switch", "-q", "-c", name, from }, root, function(ok, _, err)
+    if not ok then return fail("branch", err) end
+    done(root, "created " .. name .. (from and " from " .. from or ""), cb)
+  end)
 end
 
 local function track(s)
-  if s == "gone" then return " · gone" end
+  if s == "gone" then return "  gone" end
   local ahead, behind = s:match("ahead (%d+)"), s:match("behind (%d+)")
   if not (ahead or behind) then return "" end
-  return (" · ↑%s ↓%s"):format(ahead or 0, behind or 0)
+  return ("  ↑%s ↓%s"):format(ahead or 0, behind or 0)
 end
 
+-- Rows read `glyph · date ↑↓ · name`: only the name is the item's text, so only names are fuzzy-matched.
 local function ref_item(line)
   local ref, sha, upstream, date, head = unpack(vim.split(line, "\0", { plain = true }))
   local name = ref:match("^refs/heads/(.+)$")
   if name then
     local glyph, hl = head == "*" and "●" or "○", head == "*" and "AosDone" or "AosDim"
-    return { glyph = glyph, hl = hl, text = name .. track(upstream) .. " · " .. date, data = { kind = "local", name = name, sha = sha, head = head == "*" } }
+    return { glyph = glyph, hl = hl, id = date .. track(upstream), text = name, data = { kind = "local", name = name, sha = sha, head = head == "*" } }
   end
   name = ref:match("^refs/tags/(.+)$")
-  if name then return { glyph = M.TAG, hl = "AosRunning", text = name .. " · " .. date, data = { kind = "tag", name = name, sha = sha } } end
+  if name then return { glyph = M.TAG, hl = "AosRunning", id = date, text = name, data = { kind = "tag", name = name, sha = sha } } end
   name = ref:match("^refs/remotes/(.+)$")
   if name and not name:match("/HEAD$") then
-    return { glyph = "⇄", hl = "AosSha", text = name .. " · " .. date, data = { kind = "remote", name = name, sha = sha } }
+    return { glyph = "⇄", hl = "AosSha", id = date, text = name, data = { kind = "remote", name = name, sha = sha } }
   end
+end
+
+local function pad_ids(items)
+  local w = vim.iter(items):fold(0, function(m, i) return math.max(m, vim.api.nvim_strwidth(i.id)) end)
+  for _, i in ipairs(items) do i.id = i.id .. (" "):rep(w - vim.api.nvim_strwidth(i.id)) end
+  return items
 end
 
 -- cb(items) ordered local, remote, tags; a detached HEAD leads as its own row.
 local function refs(root, cb)
   local args = { "for-each-ref", "--sort=-committerdate", "--format=" .. FORMAT, "refs/heads", "refs/remotes", "refs/tags" }
-  repo.run(args, root, function(ok, out, err)
+  repo.run(args, root, function(ok, out, err, slow)
+    if slow then return vim.api.nvim_echo({ { "○ branch list paused · slow repo", "AosDim" } }, false, {}) end
     if not ok then return fail("for-each-ref", err) end
     local groups = { ["local"] = {}, remote = {}, tag = {} }
     for line in out:gmatch("[^\n]+") do
       local item = ref_item(line)
       if item then table.insert(groups[item.data.kind], item) end
     end
-    cb(vim.list_extend(vim.list_extend(groups["local"], groups.remote), groups.tag))
-  end)
+    cb(pad_ids(vim.list_extend(vim.list_extend(groups["local"], groups.remote), groups.tag)))
+  end, { feature = "branch picker" })
 end
 
 local function ask_name(from, root)
@@ -115,7 +246,7 @@ local function choose(item, items, root)
   local d = item.data
   if d.action == "create" then return ask_name(nil, root) end
   if d.action == "from" then return pick_from(items, root) end
-  if d.head or d.action then return end
+  if d.action then return end
   M.checkout(root, d)
 end
 
@@ -133,7 +264,7 @@ function M.pick(root)
   if not root then return vim.notify("✗ not a git repository", vim.log.levels.WARN) end
   refs(root, function(items)
     if vim.iter(items):any(function(i) return i.data.head end) then return open(root, items) end
-    repo.run({ "rev-parse", "--short", "HEAD" }, root, function(ok, out) open(root, items, ok and vim.trim(out) or nil) end)
+    repo.run({ "rev-parse", "--short", "HEAD" }, root, function(ok, out) open(root, items, ok and vim.trim(out) or nil) end, { feature = "branch picker" })
   end)
 end
 
