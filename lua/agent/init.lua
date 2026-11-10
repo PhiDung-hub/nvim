@@ -8,6 +8,8 @@ local g = require("design").glyphs
 local ns = vim.api.nvim_create_namespace("agent.tasks")
 local MAX_INLINE = 150
 local MARKER = "@agent"
+local SCAN_MS = 3000
+local repo = require("git.repo")
 
 local target, tasks = nil, {}
 
@@ -181,11 +183,7 @@ function M.add()
 end
 
 -- `@agent` (or @claude/@codex) comments become one task list; the agent removes each marker.
-local function comment_items(project)
-  if project then
-    local r = vim.system({ "rg", "--vimgrep", "--no-heading", "-i", "-e", "(//|#|--|/\\*|<!--|;)\\s*@(agent|claude|codex)\\b" }, { text = true }):wait(5000)
-    return vim.tbl_filter(function(l) return l ~= "" end, vim.split(r.stdout or "", "\n"))
-  end
+local function buffer_items()
   local out, path = {}, vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":.")
   for i, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
     local lower = line:lower()
@@ -196,9 +194,56 @@ local function comment_items(project)
   return out
 end
 
-function M.comments(project)
-  local items = comment_items(project)
-  if #items == 0 then return vim.notify(g.todo .. " no @agent comments " .. (project and "in the project" or "in this buffer")) end
+local function wide(dir) return dir == vim.env.HOME or dir == "/" end
+
+-- The tree <leader>aC scans: the cwd's repo, else the cwd; never $HOME or / wholesale (then the buffer's repo, `narrowed`).
+local function scan_root()
+  local cwd = vim.fn.getcwd()
+  local root = repo.root(cwd)
+  if root and not wide(root) then return root end
+  if not wide(cwd) then return cwd end
+  local file = vim.bo.buftype == "" and vim.api.nvim_buf_get_name(0) or ""
+  root = file ~= "" and repo.root(file) or nil
+  if root and not wide(root) then return root, true end
+end
+
+local PATTERN = "(//|#|--|/\\*|<!--|;)\\s*@(agent|claude|codex)\\b"
+
+local function nonempty(text) return vim.tbl_filter(function(l) return l ~= "" end, vim.split(text or "", "\n")) end
+
+-- Async rg over the scan root, cut at SCAN_MS; cb(lines, cut). A cheap per-file count pass (one `path:n` line per
+-- searched file, so a cut can say how far it got) finds the hits, then --vimgrep reads only those files.
+local function project_items(cb)
+  local root, narrowed = scan_root()
+  local where = vim.fn.fnamemodify(vim.fn.getcwd(), ":~")
+  if not root then return vim.notify(("%s cwd is %s · open a file in a repo to scan its @agent comments"):format(g.todo, where)) end
+  vim.notify(("%s scanning %s for @agent comments…%s"):format(g.running, vim.fn.fnamemodify(root, ":~"),
+    narrowed and (" (cwd is %s: only this buffer's repo)"):format(where) or ""))
+  local scanned, hits, rest = 0, {}, ""
+  local function count(_, data)
+    rest = rest .. (data or "")
+    for file, n in rest:gmatch("([^\n]*):(%d+)\n") do
+      scanned = scanned + 1
+      if n ~= "0" then hits[#hits + 1] = file end
+    end
+    rest = rest:match("[^\n]*$")
+  end
+  local args = { "rg", "--count", "--include-zero", "-i", "--max-filesize", "1M", "-e", PATTERN }
+  if root ~= vim.fn.getcwd() then args[#args + 1] = root end
+  vim.system(args, { text = true, timeout = SCAN_MS, stdout = count }, vim.schedule_wrap(function(r)
+    local cut = r.code == 124
+    if cut then vim.notify(("%s @agent scan cut off at %d s · %d files scanned"):format(g.todo, SCAN_MS / 1000, scanned), vim.log.levels.WARN) end
+    if #hits == 0 then return cb({}, cut) end
+    local grep = vim.list_extend({ "rg", "--vimgrep", "--no-heading", "-i", "-e", PATTERN, "--" }, hits)
+    vim.system(grep, { text = true, timeout = SCAN_MS }, vim.schedule_wrap(function(m) cb(nonempty(m.stdout), cut) end))
+  end))
+end
+
+local function send_comments(items, project, cut)
+  if #items == 0 then
+    if cut then return end
+    return vim.notify(g.todo .. " no @agent comments " .. (project and "in the project" or "in this buffer"))
+  end
   local body = "Do each request left as an @agent/@claude/@codex comment below, then delete that marker comment:\n- " .. table.concat(items, "\n- ")
   with_target(function(t)
     transport.send(t, body, true)
@@ -206,14 +251,13 @@ function M.comments(project)
   end)
 end
 
+function M.comments(project)
+  if not project then return send_comments(buffer_items(), false) end
+  project_items(function(items, cut) send_comments(items, true, cut) end)
+end
+
 -- Review list: pending hunks first, then files git reports dirty (opened against the index).
-function M.changes()
-  local items = review.items()
-  local r = vim.system({ "git", "status", "--porcelain" }, { text = true }):wait(3000)
-  for line in (r.stdout or ""):gmatch("[^\n]+") do
-    local file = line:sub(4)
-    items[#items + 1] = { glyph = "○", hl = "AosDim", id = line:sub(1, 2), text = file, data = { file = file } }
-  end
+local function changes_picker(items)
   require("ui.pick").open({
     title = "agent changes",
     items = items,
@@ -223,10 +267,21 @@ function M.changes()
         return vim.api.nvim_win_set_cursor(0, { item.data.lnum, 0 })
       end
       vim.cmd.edit(vim.fn.fnameescape(item.data.file))
-      review.seed_from_index(vim.api.nvim_get_current_buf())
-      review.jump(1)
+      review.seed_from_index(vim.api.nvim_get_current_buf(), function() review.jump(1) end)
     end,
   })
+end
+
+-- Paths come from the repo root and open from there; a cut or failed status still lists the pending hunks.
+function M.changes()
+  local items, root = review.items(), repo.root()
+  repo.run({ "status", "--porcelain" }, root, function(_, out)
+    for line in out:gmatch("[^\n]+") do
+      local file = line:sub(4)
+      items[#items + 1] = { glyph = "○", hl = "AosDim", id = line:sub(1, 2), text = file, data = { file = root and root .. "/" .. file or file } }
+    end
+    changes_picker(items)
+  end, { feature = "agent changes" })
 end
 
 -- Called by review when an agent edit lands in `buf`: its open tasks there are done.

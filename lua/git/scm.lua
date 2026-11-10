@@ -5,9 +5,10 @@ local repo = require("git.repo")
 local icons = require("ui.icons")
 local M = {}
 local ns = vim.api.nvim_create_namespace("git.scm")
+local busy_ns = vim.api.nvim_create_namespace("git.scm.busy")
 local diff = require("git.diff")
 local S = { collapsed = {}, rows = {}, draft = "", tree = false, dirs = {} }
-local timer, ptimer, wtimer = vim.uv.new_timer(), vim.uv.new_timer(), vim.uv.new_timer()
+local timer, ptimer, wtimer, btimer = vim.uv.new_timer(), vim.uv.new_timer(), vim.uv.new_timer(), vim.uv.new_timer()
 local MAX_DIRS = 64
 
 local SECTIONS = {
@@ -140,8 +141,16 @@ local function header(ctx)
     vim.list_extend(chunks, { { s.branch and " " or " detached ", s.branch and "AosId" or "AosSha" }, { head_name(s), s.branch and "AosId" or "AosSha" } })
     if s.upstream then vim.list_extend(chunks, { { ("  ↑%d ↓%d"):format(s.ahead or 0, s.behind or 0), "AosSha" }, { "  " .. s.upstream, "AosDim" } }) end
   end
-  if S.busy then chunks[#chunks + 1] = { "  ◆ " .. S.busy, "AosRunning" } end
   line(ctx, chunks, { kind = "head" })
+end
+
+-- The running push/pull/fetch and its seconds after the header, redrawn each second without a re-render.
+local function busy_mark()
+  if not (S.buf and vim.api.nvim_buf_is_valid(S.buf)) then return end
+  vim.api.nvim_buf_clear_namespace(S.buf, busy_ns, 0, -1)
+  if not S.busy then return end
+  local text = ("  ◆ %s %ds"):format(S.busy.label, math.floor((vim.uv.now() - S.busy.at) / 1000))
+  vim.api.nvim_buf_set_extmark(S.buf, busy_ns, 0, 0, { virt_text = { { text, "AosRunning" } }, virt_text_pos = "eol" })
 end
 
 local function message_row(ctx)
@@ -272,6 +281,7 @@ local function render()
   vim.api.nvim_buf_clear_namespace(S.buf, ns, 0, -1)
   for _, h in ipairs(ctx.hls) do vim.hl.range(S.buf, ns, h[4], { h[1], h[2] }, { h[1], h[3] }) end
   for l, r in pairs(ctx.right) do vim.api.nvim_buf_set_extmark(S.buf, ns, l - 1, 0, { virt_text = { r }, virt_text_pos = "right_align" }) end
+  busy_mark()
   local target, focus = landing(ctx.rows)
   S.rows = ctx.rows
   vim.api.nvim_win_set_cursor(S.win, { target, 0 })
@@ -494,16 +504,34 @@ local function discard(sel)
   end)
 end
 
+-- <C-c>, or the same key again: a running push/pull/fetch is killed after a y/n.
+local function cancel()
+  local b = S.busy
+  if not b then return notify("○ nothing to cancel") end
+  if vim.fn.confirm(("cancel %s?"):format(b.verb), "&yes\n&no", 2) ~= 1 or S.busy ~= b then return end
+  b.cancelled = true
+  vim.uv.kill(-b.job.pid, "sigterm")
+end
+
 local function remote(verb, label)
   if not S.root then return end
-  if S.busy then return notify("◆ " .. S.busy .. " already running") end
+  if S.busy and S.busy.verb == verb then return cancel() end
+  if S.busy then return notify("◆ " .. S.busy.label .. " already running") end
   local s, args = S.status or {}, { verb }
   if verb == "pull" then args = { "pull", "--ff-only" } end
   if verb == "push" and s.branch and not s.upstream then args = { "push", "--set-upstream", "origin", s.branch } end
-  S.busy = label
-  render()
-  repo.run(args, S.root, function(ok, out, err)
+  local b = { verb = verb, label = label, at = vim.uv.now() }
+  S.busy = b
+  busy_mark()
+  btimer:start(1000, 1000, vim.schedule_wrap(busy_mark))
+  b.job = repo.run(args, S.root, function(ok, out, err)
     S.busy = nil
+    btimer:stop()
+    busy_mark()
+    if b.cancelled then
+      notify("○ git " .. verb .. " cancelled")
+      return refresh()
+    end
     local last = vim.trim(err .. out):match("([^\n]*)$")
     if ok then notify("✓ git " .. verb .. (last ~= "" and " · " .. vim.trim(last) or "")) end
     if not ok then fail("git " .. verb, err ~= "" and err or out) end
@@ -686,6 +714,7 @@ local KEYS = {
   { "p", function() remote("push", "pushing") end, "push" },
   { "P", function() remote("pull", "pulling") end, "pull --ff-only" },
   { "f", function() remote("fetch", "fetching") end, "fetch" },
+  { "<C-c>", cancel, "cancel the running push / pull / fetch (also p / P / f again)" },
   { "r", function() refresh() end, "refresh" },
   { "q", function() M.close() end, "close" },
   { "<Esc>", function() M.close() end, "close" },
@@ -821,12 +850,8 @@ local function passthrough(args)
   repo.run(args, root, function(ok, out, err)
     local text = vim.trim(out .. (err ~= "" and "\n" .. err or ""))
     if ok and text == "" then notify("✓ " .. title) else float(title, (ok and "" or "✗ failed\n\n") .. text) end
-    if args[1] ~= "init" or not visible() then return refresh() end
-    -- repo.root caches "not a repo", so the new root is asked for directly.
-    repo.run({ "rev-parse", "--show-toplevel" }, root, function(found, top)
-      if found then set_root(vim.trim(top)) end
-      refresh()
-    end, { feature = "status" })
+    if args[1] == "init" and visible() then set_root(repo.root(root) or S.root) end
+    refresh()
   end, { feature = "git " .. args[1] })
 end
 

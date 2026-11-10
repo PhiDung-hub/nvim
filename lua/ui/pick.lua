@@ -30,17 +30,31 @@ local function row(item)
   return table.concat(parts, SEP)
 end
 
+local function mark(buf, line, from, to, hl)
+  vim.api.nvim_buf_set_extmark(buf, ns, line, from, { end_col = to, hl_group = hl, ephemeral = true })
+end
+
 local function paint(buf, line, item)
   local col = 0
   if item.glyph then
-    vim.hl.range(buf, ns, item.hl or "AosDim", { line, 0 }, { line, #item.glyph })
+    mark(buf, line, 0, #item.glyph, item.hl or "AosDim")
     col = #item.glyph + #SEP
   end
   if item.id then
-    vim.hl.range(buf, ns, "AosId", { line, col }, { line, col + #item.id })
-    vim.hl.range(buf, ns, "AosFaint", { line, col + #item.id }, { line, col + #item.id + #SEP })
+    mark(buf, line, col, col + #item.id, "AosId")
+    mark(buf, line, col + #item.id, col + #item.id + #SEP, "AosFaint")
   end
 end
+
+-- Rows are painted as they are drawn, so a 12k-row list (refs of a big repo) costs only what is on screen.
+local painted = {} -- list buf -> shown items
+vim.api.nvim_set_decoration_provider(ns, {
+  on_win = function(_, _, buf) return painted[buf] ~= nil end,
+  on_line = function(_, _, buf, line)
+    local item = painted[buf][line + 1]
+    if item then paint(buf, line, item) end
+  end,
+})
 
 local function rel(path) return vim.fn.fnamemodify(path, ":~:.") end
 
@@ -105,8 +119,7 @@ function M.open(opts)
   local function render()
     local lines = vim.tbl_map(row, shown)
     vim.api.nvim_buf_set_lines(lbuf, 0, -1, false, #lines > 0 and lines or { "○ · no match" })
-    vim.api.nvim_buf_clear_namespace(lbuf, ns, 0, -1)
-    for i, item in ipairs(shown) do paint(lbuf, i - 1, item) end
+    painted[lbuf] = shown
     index = math.max(1, math.min(index, #shown))
     if #shown > 0 then vim.api.nvim_win_set_cursor(lwin, { index, 0 }) end
     vim.api.nvim_win_set_config(lwin, { footer = (" %d/%d "):format(#shown, #items), footer_pos = "right" })
@@ -125,6 +138,7 @@ function M.open(opts)
 
   local done = false
   local function close()
+    painted[lbuf] = nil
     if not done and opts.on_cancel then vim.schedule(opts.on_cancel) end
     done = true
     vim.cmd.stopinsert()
