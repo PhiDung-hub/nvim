@@ -44,6 +44,7 @@ map("n", ";e", pick.diagnostics, { desc = "Diagnostics" })
 
 -- Tools
 map({ "n", "t" }, "<m-->", require("ui.term").toggle, { desc = "Terminal" })
+map("n", "<S-M-G>", function() require("git.scm").toggle() end, { desc = "Source Control" })
 map("n", "<leader>f", function() require("core.format").format() end, { desc = "Format buffer" })
 map("n", "<leader>qs", function() _G.AosSession(false) end, { desc = "Restore session" })
 map("n", "<leader>ql", function() _G.AosSession(true) end, { desc = "Restore last session" })

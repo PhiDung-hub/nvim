@@ -104,17 +104,24 @@ end
 
 -- Gutter -------------------------------------------------------------------------------------
 
+-- Drawn by the statuscolumn (M.column) in its own cell, so diagnostic signs never hide a hunk.
+local gutter = {} -- buf -> { [lnum] = "%#GitAdd#▎" }
+
 local function place(buf, hunks)
-  api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  local last = api.nvim_buf_line_count(buf)
+  local rows, last = {}, api.nvim_buf_line_count(buf)
   for _, h in ipairs(hunks) do
     local kind = h[2] == 0 and "GitAdd" or h[4] == 0 and "GitDelete" or "GitChange"
     local text = kind ~= "GitDelete" and "▎" or h[3] == 0 and "▔" or "▁"
     local first, final = span(h)
-    for l = math.min(first, last), math.min(final, last) do
-      api.nvim_buf_set_extmark(buf, ns, l - 1, 0, { sign_text = text, sign_hl_group = kind, priority = 5 })
-    end
+    for l = math.min(first, last), math.min(final, last) do rows[l] = "%#" .. kind .. "#" .. text .. "%*" end
   end
+  gutter[buf] = rows
+  pcall(api.nvim__redraw, { buf = buf, statuscolumn = true })
+end
+
+function M.column()
+  local rows = vim.v.virtnum == 0 and gutter[api.nvim_get_current_buf()]
+  return rows and rows[vim.v.lnum] or " "
 end
 
 local function update(buf)
@@ -697,7 +704,7 @@ function M.setup()
   au({ "CursorMoved", "InsertEnter", "BufLeave" }, clear_line_blame)
   au("BufWipeout", function(ev)
     if timers[ev.buf] then timers[ev.buf]:close() end
-    timers[ev.buf], bufs[ev.buf] = nil, nil
+    timers[ev.buf], bufs[ev.buf], gutter[ev.buf] = nil, nil, nil
   end)
 end
 

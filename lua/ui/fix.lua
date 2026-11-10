@@ -572,7 +572,7 @@ local function show_hint(spot, entries)
   if best then
     chunks = { { "  ◆ " .. trunc((best.action.title:gsub("\n", " ")), 60), "AosRunning" } }
     if #quick > 1 then chunks[2] = { " +" .. (#quick - 1), "AosDim" } end
-  elseif codex_ok() then
+  elseif codex_ok() and vim.iter(spot.diags):any(function(d) return d.severity <= vim.diagnostic.severity.WARN end) then
     chunks = { { "  ◆ ask codex to fix", "AosRunning" } }
   end
   hint.last = vim.tbl_extend("force", spot, { count = #quick })
@@ -597,7 +597,7 @@ local function probe()
   if codex_job or vim.fn.mode() ~= "n" or not eligible(buf) then return end
   local c = at_cursor(buf)
   if #c.diags == 0 then return end
-  local spot, gen = { buf = buf, row = c.row, key = c.key, tick = vim.b[buf].changedtick }, hint.gen
+  local spot, gen = { buf = buf, row = c.row, key = c.key, tick = vim.b[buf].changedtick, diags = c.diags }, hint.gen
   hint.buf = buf
   local opts = { first = c.row, last = c.row, diags = c.diags, cursor = c.at, only = { "quickfix" }, trigger = 2 }
   hint.cancel = request(buf, opts, function(entries)

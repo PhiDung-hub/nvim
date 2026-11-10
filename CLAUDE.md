@@ -24,7 +24,6 @@ lua/core/lsp.lua         which servers to enable, TypeScript routing, LSP keymap
 lua/core/treesitter.lua  FileType → vim.treesitter.start + indentexpr (size-guarded)
 lua/core/format.lua      external formatters + LSP fallback, solhint diagnostics
 lua/core/edit.lua        autopairs, tag auto-close, #rrggbb swatches
-lua/core/git.lua         index-diff signs, branch for the tabline
 lua/ui/pick.lua          fuzzy picker with optional preview pane; also vim.ui.select
 lua/ui/lsp.lua           LSP/syntax UI: hover, peek, finder, outline, breadcrumbs, rename, calls, inspect
 lua/ui/fix.lua           quick fix: cursor-line hint, apply/pick with diff preview, fix-all, Codex/agent fallback
@@ -33,6 +32,7 @@ lua/ui/term.lua          float terminal
 lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for neo-tree/fff
 lua/ui/markdown.lua      in-buffer markdown rendering (extmarks from the markdown parsers)
 lua/agent/               Claude/Codex co-working (below)
+lua/git/                 VS Code-style git (below): repo, signs, scm, diff, graph, branch
 ```
 
 ## Plugins (lua/plugins.lua)
@@ -59,14 +59,14 @@ External tools outside lazy: language servers and formatters in `~/.local/share/
 
 | # | Plugin(s) | Local replacement | Effort | Notes |
 |---|---|---|---|---|
-| 1 | neo-tree + nui + plenary | `ui/tree.lua`: libuv scan, git status from `core/git`, split sidebar | medium | removes three plugins at once |
+| 1 | neo-tree + nui + plenary | `ui/tree.lua`: libuv scan, git status from `git.repo`, split sidebar | medium | removes three plugins at once |
 | 2 | fff | `ui/pick` + `rg --files` / `rg --vimgrep`, frecency from `v:oldfiles` | medium | loses fff's native scorer |
 | 3 | mason | `:Tools` installing via npm/cargo/pip into one bin dir | medium | keep the existing bin dir on PATH |
 | 4 | lazy.nvim | `vim.pack` (built into nvim 0.12) | medium | lockfile and lazy-loading move to local code |
 | 5 | blink.cmp | native `vim.lsp.completion` + small path/buffer sources | large | fuzzy ranking is the hard part |
 | — | nvim-treesitter, lean.nvim | keep | — | queries/parser builds and the Lean infoview are too large to own |
 
-Replaced locally already: nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns → `core/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`.
+Replaced locally already: nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`.
 
 Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
 
@@ -106,6 +106,17 @@ Attach nvim to a running Claude Code / Codex session, or start one in a split.
 ]a / [a  next/prev hunk       <leader>ay / aY keep hunk / all          <leader>ar / aR undo hunk / all
 :Agent [attach|spawn claude|codex|view|changes|comments|detach]  :'<,'>AgentAsk  :'<,'>AgentTask
 ```
+
+## Git (lua/git)
+
+All git work is async through `git/repo.lua` (run, root, porcelain-v2 status, `show rev:path`, `show_raw` for CRLF). Every view is a centred popup (~90%×85%, ` ❯ … ` titles); `q`/`<Esc>` closes it and returns to the original window.
+- **Gutter** (`signs.lua`): hunks against the index drawn by `statuscolumn` in their own cell after the line number (`▎` green added / yellow changed, `▁`/`▔` red deleted), so diagnostic signs never hide them. Refreshes on edits, saves and `.git` changes (fs_event on HEAD/index/refs; agents commit outside nvim).
+- **Source Control** `<leader>gg` / `:Git` / `<S-M-G>`: list (branch ↑↓, commit box, Merge/Staged/Changes, VS Code letters) beside a live diff of the row (side by side ≥ 120 cols, else inline). List: `s`/`u`/`x` stage/unstage/discard (row, section header or visual), `S`/`U`/`X` all, `c` commit (offers stage-all; refuses unresolved conflicts), `C` amend, `t` tree, `p`/`P`/`f` push/pull --ff-only/fetch, `O` open file, `g?` help. Diff pane: `s`/`x` stage/revert hunk (saves first), `u` unstage on staged diffs, `]c`/`[c`, `<leader>gd` side-by-side ↔ inline. `<leader>gd` opens it on the current file, `<leader>gc` the commit editor, `:Git <args>` runs git (shell-style quoting) into a float.
+- **Graph** `<leader>gl` / `:GitGraph`: own lane layout from `git log --topo-order` (branches, remotes, tags, HEAD), ref chips, 400 commits per page. `<CR>`/`<Tab>` expand files, `<CR>` on a file → side-by-side diff in the popup, `K` details, `y` sha, `c` checkout (via `git switch`), `/` filter, `b` all ↔ HEAD.
+- **Branches** `<leader>gb` / `:GitBranch [name]` or click the branch segment: create, create from…, local (↑↓, date), remote (tracking), tags.
+- **Hunks**: `]h`/`[h`, `ih`, `<leader>hp` peek (`s`/`x`/`]h`/`[h` inside), `<leader>hs` stage hunk (visual: selected lines), `<leader>hS` stage buffer, `<leader>hr` revert hunk, `<leader>hu` unstage. **Blame**: `<leader>gB` line blame (eol, unsaved edits mapped), `<leader>gL` file blame split (`<CR>` commit diff).
+- Branch segment `main*+ ↑1↓2`: `*` unstaged, `+` staged, ↑↓ vs upstream, short sha when detached.
+- Limits: no 3-way merge editor (conflict rows show the markers); signs skip conflicted files; blame is slow on partial clones.
 
 ## AI completion (lua/core/complete.lua)
 

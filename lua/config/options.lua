@@ -45,6 +45,7 @@ opt.termguicolors = true
 opt.number = true
 opt.relativenumber = true
 opt.signcolumn = "yes"
+opt.statuscolumn = "%C%s%l %{%v:lua.require'git.signs'.column()%} "
 opt.cursorline = true
 opt.showmode = false
 opt.laststatus = 0

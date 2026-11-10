@@ -69,7 +69,6 @@ return {
     cmd = "Neotree",
     keys = {
       { "<M-t>", "<cmd>Neotree left toggle<cr>", desc = "Tree" },
-      { "<S-M-G>", "<cmd>Neotree float git_status toggle<cr>", desc = "Tree git status" },
       { "<S-M-B>", "<cmd>Neotree float buffers toggle<cr>", desc = "Tree buffers" },
       { "<S-M-T>", "<cmd>Neotree float filesystem toggle<cr>", desc = "Tree filesystem" },
     },
