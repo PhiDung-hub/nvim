@@ -50,12 +50,16 @@ end
 
 local lock = "\u{f023}"
 
+local PAD = "  "
+
 local function buf_label(buf, index, name)
   local current = buf == vim.api.nvim_get_current_buf()
-  local base = "%#" .. (current and on_surface("Normal", true) or "TabLine") .. "#"
-  local function paint(group, text) return "%#" .. on_surface(group) .. "#" .. text .. base end
+  local base = "%#" .. (current and "TabLineSel" or "TabLine") .. "#"
+  local function paint(group, text)
+    if current then return text end
+    return "%#" .. on_surface(group) .. "#" .. text .. base
+  end
   local mark = require("agent.review").pending(buf) > 0 and g.attention or current and g.reply or g.todo
-  local chip = current and ("%%#TabLineSel# %s %d %s "):format(mark, index, base) or ("%s %s %d:"):format(base, mark, index)
   local terminal = vim.bo[buf].buftype == "terminal"
   local icon, icon_hl = icons.get_icon(terminal and "terminal" or name:match("[^/]*$"), nil, { default = true })
   if name == "" then name = "[No Name]" end
@@ -67,8 +71,9 @@ local function buf_label(buf, index, name)
   local counts = vim.diagnostic.count(buf)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
-  if current then label = label .. " " .. paint("Statement", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
-  return ("%%%d@v:lua.AosTabClick@%s%s %%X"):format(buf, chip, label), current
+  if current then label = label .. "  " .. ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol(".")) end
+  local text = ("%s%s%s %d:%s%s"):format(base, PAD, mark, index, label, PAD)
+  return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), current
 end
 
 local function tabs(room)
@@ -92,7 +97,13 @@ local function tabs(room)
   end
   local before = first > 1 and ("%%#AosDim#‹%d "):format(first - 1) or ""
   local after = last < #parts and (" %%#AosDim#%d›"):format(#parts - last) or ""
-  return before .. table.concat(parts, "%#TabLineFill# ", first, last) .. after
+  local sep = "%#" .. on_surface("AosFaint") .. "#│"
+  local out = {}
+  for i = first, last do
+    if i > first and i ~= current and i - 1 ~= current then out[#out + 1] = sep end
+    out[#out + 1] = parts[i]
+  end
+  return before .. table.concat(out) .. "%#TabLineFill#" .. after
 end
 
 local modes = { i = "insert", v = "visual", V = "v-line", ["\22"] = "v-block", R = "replace", c = "command", t = "term" }
