@@ -31,22 +31,23 @@ local function label(l, ch)
   if rest == "" or rest:sub(1, 1) == " " then return vim.trim(rest) end
 end
 
+-- Every bare ======= is a separator candidate (a side may hold a setext underline); in diff3 it must follow the base.
 local function step(out, cur, i, l)
   local ours = label(l, "<")
-  if ours then return { s = i, ours = ours } end
+  if ours then return { s = i, ours = ours, seps = {} } end
   if not cur then return end
-  local base = not cur.m and label(l, "|")
+  local base = not cur.b and label(l, "|")
   if base then
-    cur.b, cur.base = i, base
+    cur.b, cur.base, cur.seps = i, base, {}
     return cur
   end
-  if not cur.m and label(l, "=") == "" then
-    cur.m = i
+  if label(l, "=") == "" then
+    cur.seps[#cur.seps + 1] = i
     return cur
   end
-  local theirs = cur.m and label(l, ">")
+  local theirs = #cur.seps > 0 and label(l, ">")
   if not theirs then return cur end
-  cur.e, cur.theirs = i, theirs
+  cur.e, cur.theirs, cur.m = i, theirs, cur.seps[1]
   out[#out + 1] = cur
 end
 
@@ -73,7 +74,22 @@ local function at(list, row)
   end
 end
 
-local function conflicts(buf) return parse(api.nvim_buf_get_lines(buf, 0, -1, false)) end
+-- Any conflict marker line, even one outside a complete block (a hand-deleted >>>>>>>).
+local function stray(lines)
+  for _, l in ipairs(lines) do
+    if label(l, "<") or label(l, "|") or label(l, ">") then return true end
+  end
+  return false
+end
+
+local settle
+
+local function conflicts(buf)
+  local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
+  local list = parse(lines)
+  for _, c in ipairs(list) do settle(buf, c, lines) end
+  return list, lines
+end
 
 -- Decorations --------------------------------------------------------------------------------
 
@@ -202,9 +218,10 @@ end
 
 local function accept(how)
   local buf, win = target()
-  local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
-  local c = at(parse(lines), api.nvim_win_get_cursor(win)[1])
+  local list, lines = conflicts(buf)
+  local c = at(list, api.nvim_win_get_cursor(win)[1])
   if not c then return notify("○ cursor is not in a conflict · ]x next") end
+  if c.ambiguous then return notify("○ ambiguous ======= in this conflict · :GitMerge", vim.log.levels.WARN) end
   if not vim.bo[buf].modifiable then return notify("○ buffer is not modifiable", vim.log.levels.WARN) end
   local s, out = sides(c, lines), {}
   for _, part in ipairs(PICK[how]) do vim.list_extend(out, s[part]) end
@@ -275,8 +292,10 @@ end
 
 header = function()
   if not (open() and api.nvim_buf_is_valid(P.header)) then return end
-  local n = #conflicts(P.buf)
+  local list, lines = conflicts(P.buf)
+  local n = #list
   local chunks = n > 0 and { { "! " .. plural(n, "conflict") .. " left", "AosRunning" } }
+    or stray(lines) and { { "! stray conflict markers", "AosRunning" } }
     or { { "✓ all conflicts resolved", "AosDone" }, { " · s mark resolved", "AosDim" } }
   local cur, inc = role(P)
   vim.list_extend(chunks, { { "  ·  " .. P.op .. " · ", "AosFaint" }, { "current = " .. cur, "AosDone" }, { " · ", "AosFaint" }, { "incoming = " .. inc, "AosId" } })
@@ -306,6 +325,27 @@ local function nearest(lines, want, guess)
     if same(lines, i, want) and (not best or math.abs(i - guess) < math.abs(best - guess)) then best = i end
   end
   return best
+end
+
+local function fits(name, want)
+  want = vim.tbl_map(function(l) return (l:gsub("\r$", "")) end, want)
+  return #want == 0 or nearest(P.text[name], want, 1) ~= nil
+end
+
+-- Several ======= candidates: the popup picks the one whose sides are found in :2/:3 (and :1); elsewhere it stays ambiguous.
+settle = function(buf, c, lines)
+  if #c.seps < 2 then return end
+  c.ambiguous = true
+  if not (open() and buf == P.buf and P.text.current) then return end
+  for _, m in ipairs(c.seps) do
+    c.m = m
+    local s = sides(c, lines)
+    if fits("current", s.current) and fits("incoming", s.incoming) and (not c.b or fits("base", s.base)) then
+      c.ambiguous = nil
+      return
+    end
+  end
+  c.m = c.seps[1]
 end
 
 -- Scrolls each side pane to the conflict's text there (or just past the line before it when that side is empty).
@@ -381,8 +421,8 @@ local function place()
   for _, name in ipairs({ "header", "incoming", "base", "current", "result" }) do
     local w, conf = P.wins[name], r[name]
     if not conf and w then
-      pcall(api.nvim_win_close, w, true)
       P.wins[name] = nil
+      pcall(api.nvim_win_close, w, true)
     elseif conf and w and api.nvim_win_is_valid(w) then
       api.nvim_win_set_config(w, conf)
     elseif conf then
@@ -436,10 +476,16 @@ local function refresh_scm()
 end
 
 local function resolved()
-  local n = #conflicts(P.buf)
-  if n > 0 then return notify("! " .. plural(n, "conflict") .. " left · resolve the markers first", vim.log.levels.WARN) end
-  if vim.bo[P.buf].modified then api.nvim_buf_call(P.buf, function() vim.cmd("silent write") end) end
+  local list, lines = conflicts(P.buf)
+  if #list > 0 then return notify("! " .. plural(#list, "conflict") .. " left · resolve the markers first", vim.log.levels.WARN) end
+  if stray(lines) then return notify("! stray conflict markers left · remove them first", vim.log.levels.WARN) end
   local root, path = P.root, P.path
+  if vim.bo[P.buf].modified then
+    local ok, err = pcall(api.nvim_buf_call, P.buf, function() vim.cmd("silent write") end)
+    if not ok then return notify("✗ write · " .. tostring(err):gsub("\n.*", ""), vim.log.levels.ERROR) end
+  end
+  local disk = vim.fn.filereadable(root .. "/" .. path) == 1 and vim.fn.readfile(root .. "/" .. path) or {}
+  if stray(disk) then return notify("! " .. path .. " on disk still has conflict markers", vim.log.levels.WARN) end
   repo.run({ "--literal-pathspecs", "add", "--", path }, root, function(ok, _, err)
     if not ok then return notify("✗ git add · " .. vim.trim(err):gsub("\n.*", ""), vim.log.levels.ERROR) end
     notify("✓ " .. path .. " marked resolved")
@@ -464,7 +510,10 @@ M.keys = {
 local function result_buf(path)
   local buf = vim.fn.bufadd(path)
   P.borrowed = not api.nvim_buf_is_loaded(buf)
-  if not P.borrowed then return buf end
+  if not P.borrowed then
+    pcall(vim.cmd.checktime, buf)
+    return buf
+  end
   local shm = vim.o.shortmess
   vim.opt.shortmess:append("A")
   pcall(vim.fn.bufload, buf)
@@ -616,7 +665,7 @@ end
 -- :GitMerge [path] / <leader>gm: the given file, else the current one when conflicted, else a pick of the conflicts.
 function M.command(arg)
   arg = arg ~= "" and arg or nil
-  if open() and not arg and api.nvim_get_current_buf() == P.buf then return toggle_base() end
+  if open() and not arg and vim.tbl_contains(popup_wins(), api.nvim_get_current_win()) then return toggle_base() end
   local file = arg and vim.fn.fnamemodify(arg, ":p") or vim.bo.buftype == "" and api.nvim_buf_get_name(0) or ""
   local root = repo.root(file ~= "" and file or vim.fn.getcwd())
   if not root then return notify("○ not a git repository") end

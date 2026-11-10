@@ -6,7 +6,7 @@ local icons = require("ui.icons")
 local M = {}
 local ns = vim.api.nvim_create_namespace("git.scm")
 local diff = require("git.diff")
-local S = { collapsed = {}, rows = {}, draft = "", quiet = 0, tree = false, dirs = {} }
+local S = { collapsed = {}, rows = {}, draft = "", tree = false, dirs = {} }
 local timer, ptimer, wtimer = vim.uv.new_timer(), vim.uv.new_timer(), vim.uv.new_timer()
 local MAX_DIRS = 64
 
@@ -163,7 +163,11 @@ local function contents()
   end
   header(ctx)
   if not S.status then
-    if paused() then line(ctx, { { "○ status paused · slow repo", "AosRunning" } }) return ctx end
+    if paused() then
+      line(ctx, { { "○ status paused", "AosSha" } })
+      line(ctx, { { "  slow repo", "AosDim" } })
+      return ctx
+    end
     line(ctx, { { S.err and "✗ " .. vim.trim(S.err):gsub("\n.*", "") or "◆ git status", S.err and "AosFailed" or "AosRunning" } })
     return ctx
   end
@@ -288,11 +292,12 @@ local function refresh()
   if S.inflight then S.again = true return end
   S.inflight, S.again = true, false
   repo.status(root, function(s, err)
-    S.inflight, S.quiet = false, vim.uv.now() + 300
-    if S.again or root ~= S.root then return refresh() end
+    S.inflight = false
+    if root ~= S.root then return refresh() end
     S.status, S.err = s, err
     render()
     watch_dirs()
+    if S.again then refresh() end
   end)
 end
 
@@ -302,12 +307,6 @@ local function schedule()
   if not visible() then return end
   timer:stop()
   timer:start(200, 0, vim.schedule_wrap(refresh))
-end
-
--- `git status` may rewrite the index itself; events during and just after our own run are ignored.
-local function on_git_event()
-  if S.inflight or vim.uv.now() < S.quiet then return end
-  schedule()
 end
 
 -- Agents write outside nvim: a change in the root or a listed file's directory refreshes within ~1 s, at most once a second.
@@ -361,7 +360,7 @@ local function watch(root)
     S.watcher = vim.uv.new_fs_event()
     S.watcher:start(vim.trim(out), {}, function(err, name)
       if err or (name or ""):match("%.lock$") then return end
-      vim.schedule(on_git_event)
+      vim.schedule(schedule)
     end)
   end, { feature = "status" })
 end
