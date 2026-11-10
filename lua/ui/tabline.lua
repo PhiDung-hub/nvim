@@ -4,8 +4,14 @@ local g = require("design").glyphs
 
 local function esc(s) return (s:gsub("%%", "%%%%")) end
 
+-- The blank buffer nvim starts with (unnamed, empty, unchanged) is not worth a tab.
+local function blank(b)
+  return vim.api.nvim_buf_get_name(b) == "" and not vim.bo[b].modified and vim.bo[b].buftype == ""
+    and vim.api.nvim_buf_line_count(b) == 1 and vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] == ""
+end
+
 function M.listed()
-  return vim.tbl_filter(function(b) return vim.bo[b].buflisted end, vim.api.nvim_list_bufs())
+  return vim.tbl_filter(function(b) return vim.bo[b].buflisted and not blank(b) end, vim.api.nvim_list_bufs())
 end
 
 local function buf_label(buf, index)
