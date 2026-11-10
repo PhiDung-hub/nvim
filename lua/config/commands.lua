@@ -36,7 +36,10 @@ local function entries()
     it.count = counts[it.key] or 0
     it.glyph, it.hl = it.count > 0 and "●" or "○", it.count > 0 and "AosDone" or "AosFaint"
   end
-  table.sort(items, function(a, b) return a.count ~= b.count and a.count > b.count or a.id < b.id end)
+  table.sort(items, function(a, b)
+    if a.count ~= b.count then return a.count > b.count end
+    return a.id < b.id
+  end)
   return items
 end
 
