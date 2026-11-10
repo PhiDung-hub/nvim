@@ -5,6 +5,34 @@ local pick = require("ui.pick")
 local ns = vim.api.nvim_create_namespace("ui.lsp")
 local symbols, timers = {}, {}
 
+M.keys = {
+  {
+    section = "Peek",
+    keys = {
+      { "<CR>", "open the definition in the original window" },
+      { "q", "close" },
+      { "<Esc>", "close" },
+    },
+  },
+  {
+    section = "Rename",
+    keys = {
+      { "<CR>", "apply the new name", "n i s" },
+      { "<C-c>", "cancel", "n i s" },
+      { "q", "cancel" },
+      { "<Esc>", "cancel" },
+    },
+  },
+  {
+    section = "Outline",
+    keys = {
+      { "<CR>", "jump to the symbol" },
+      { "o", "jump to the symbol" },
+      { "q", "close" },
+    },
+  },
+}
+
 local kind_glyph = {
   File = "▣", Module = "▣", Namespace = "▣", Package = "▣",
   Class = "◇", Interface = "◇", Struct = "◇", Enum = "◇", TypeParameter = "◇",

@@ -7,6 +7,21 @@ local ns = vim.api.nvim_create_namespace("ui.pick")
 local pns = vim.api.nvim_create_namespace("ui.pick.preview")
 local SEP = " · "
 
+M.keys = {
+  {
+    section = "Picker",
+    keys = {
+      { "<CR>", "choose the row", "n i" },
+      { "<Down>", "next row", "n i" },
+      { "<C-n>", "next row", "n i" },
+      { "<Up>", "previous row", "n i" },
+      { "<C-p>", "previous row", "n i" },
+      { "<Esc>", "close", "n i" },
+      { "<C-c>", "close", "n i" },
+    },
+  },
+}
+
 local function row(item)
   local parts = {}
   if item.glyph then parts[#parts + 1] = item.glyph end

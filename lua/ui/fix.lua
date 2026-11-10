@@ -18,6 +18,19 @@ local CODEX_INSTRUCTIONS = table.concat({
 
 local hint, codex_job = { timer = vim.uv.new_timer(), gen = 0 }, nil
 
+M.keys = {
+  {
+    section = "Codex fix",
+    keys = {
+      { "<CR>", "apply the previewed fix" },
+      { "a", "apply the previewed fix" },
+      { "q", "discard" },
+      { "<Esc>", "discard" },
+      { "<C-c>", "cancel while ◆ codex fixing… shows" },
+    },
+  },
+}
+
 local function rel(path) return vim.fn.fnamemodify(path, ":~:.") end
 local function trunc(s, n) return #s > n and (vim.fn.strcharpart(s, 0, n - 1) .. "…") or s end
 local function codex_ok() return vim.fn.executable("codex") == 1 end

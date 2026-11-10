@@ -10,6 +10,16 @@ local MAX_INLINE = 150
 local MARKER = "@agent"
 
 local target, tasks = nil, {}
+
+M.keys = {
+  {
+    section = "Agent prompt",
+    keys = {
+      { "<CR>", "send to the agent", "n i" },
+      { "<Esc>", "cancel", "n i" },
+    },
+  },
+}
 local state_glyph = { running = g.running, waiting = g.question, idle = g.done, failed = g.failed, gone = g.failed }
 local state_hl = { running = "AosRunning", waiting = "AosRunning", idle = "AosDone", failed = "AosFailed", gone = "AosFailed" }
 

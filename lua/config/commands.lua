@@ -20,11 +20,11 @@ local function bump(key)
 end
 
 local function entries()
-  local items, leader = {}, vim.g.mapleader or "\\"
+  local items, label = {}, require("ui.keys").label
   local maps = vim.list_extend(vim.api.nvim_get_keymap("n"), vim.api.nvim_buf_get_keymap(0, "n"))
   for _, m in ipairs(maps) do
     if m.desc and not m.lhs:match("^<Plug>") then
-      items[#items + 1] = { key = m.lhs, id = vim.fn.keytrans(m.lhs):gsub("^" .. vim.pesc(vim.fn.keytrans(leader)), "␣"), text = m.desc }
+      items[#items + 1] = { key = m.lhs, id = label(m.lhs), text = m.desc }
     end
   end
   local commands = vim.tbl_extend("force", vim.api.nvim_get_commands({}), vim.api.nvim_buf_get_commands(0, {}))
@@ -50,3 +50,8 @@ end
 vim.keymap.set("n", "<leader>:", function()
   require("ui.pick").open({ title = "commands", items = entries(), on_choose = run })
 end, { desc = "Command palette" })
+
+cmd("Keys", function(o) require("ui.keys").open(o.args) end, {
+  nargs = "?", desc = "Hotkey help: every key, one table per tab", complete = function(lead) return require("ui.keys").complete(lead) end,
+})
+vim.keymap.set("n", "<leader>?", function() require("ui.keys").open() end, { desc = "Hotkey help" })
