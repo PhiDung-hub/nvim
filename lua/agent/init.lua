@@ -145,17 +145,22 @@ local function annotate(buf, row, text, hl)
   })
 end
 
+function M.attached() return target and target.state ~= "gone" and target or nil end
+
+-- Hand `t` a task on lines first..last of buf, annotated until its edit lands.
+function M.send_task(t, buf, first, last, instruction)
+  transport.send(t, instruction .. "\n\nWork on this code, edit the file in place:\n" .. context(buf, first, last), true)
+  tasks[buf] = tasks[buf] or {}
+  local label = ("%s %s · %s"):format(g.running, t.kind, instruction)
+  table.insert(tasks[buf], { row = first - 1, text = instruction, mark = annotate(buf, first - 1, label, "AosAnnotation") })
+  vim.cmd.redrawtabline()
+end
+
 function M.task(first, last)
   local buf = vim.api.nvim_get_current_buf()
   if not first then first, last = selection() end
   input("task", function(instruction)
-    with_target(function(t)
-      transport.send(t, instruction .. "\n\nWork on this code, edit the file in place:\n" .. context(buf, first, last), true)
-      tasks[buf] = tasks[buf] or {}
-      local label = ("%s %s · %s"):format(g.running, t.kind, instruction)
-      table.insert(tasks[buf], { row = first - 1, text = instruction, mark = annotate(buf, first - 1, label, "AosAnnotation") })
-      vim.cmd.redrawtabline()
-    end)
+    with_target(function(t) M.send_task(t, buf, first, last, instruction) end)
   end)
 end
 
