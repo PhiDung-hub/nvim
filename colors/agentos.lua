@@ -173,6 +173,8 @@ local hl = {
   AosAgentDelete = { fg = blend(t.red, 0.75), bg = blend(t.red, 0.07) },
   AosAgentSign = { fg = t.magenta },
   AosAnnotation = { fg = t.yellow, italic = true },
+  AosBorder = { fg = t.border },
+  AosMdCode = { bg = t.selection_soft },
   GitAdd = { fg = t.green },
   GitChange = { fg = t.yellow },
   GitDelete = { fg = t.red },
@@ -195,9 +197,6 @@ local hl = {
   BlinkCmpLabelMatch = { fg = t.cyan, bold = true },
   BlinkCmpSource = { fg = t.faint },
   FFFBorder = { link = "FloatBorder" },
-  RenderMarkdownCode = { bg = t.selection_soft },
-  RenderMarkdownH1Bg = { fg = t.blue, bold = true },
-  RenderMarkdownH2Bg = { fg = t.cyan, bold = true },
 }
 
 for name, spec in pairs(hl) do
