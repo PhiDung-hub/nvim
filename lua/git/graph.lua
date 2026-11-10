@@ -7,19 +7,22 @@ local icons = require("ui.icons")
 local pick = require("ui.pick")
 local ns = vim.api.nvim_create_namespace("git.graph")
 local fns = vim.api.nvim_create_namespace("git.graph.float")
-local PAGE, LANES, MAX_ART = 400, 6, 40
+local PAGE, RELOAD, LANES, MAX_LANES, MAX_FILES = 400, 2000, 6, 20, 500
 local FORMAT = "%H%x00%P%x00%D%x00%an%x00%at%x00%s"
 local UNBORN = { "does not have any commits", "unknown revision", "bad revision 'HEAD'" }
 local DIFFOPT = "internal,filler,closeoff,algorithm:histogram,linematch:60,inline:char"
+local WALK = { "--branches", "--remotes", "--tags", "HEAD" }
 local letter_hl = { M = "AosRunning", A = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", T = "AosRunning", U = "AosDone" }
-local corner = { ["end"] = { "╰", "╯" }, start = { "╭", "╮" }, join = { "├", "┤" } }
-local tee = { ["end"] = "┴", start = "┬", join = "┼" }
+local U, D, L, R = 1, 2, 4, 8
+local BOX = { [3] = "│", [12] = "─", [10] = "╭", [6] = "╮", [9] = "╰", [5] = "╯", [11] = "├", [7] = "┤", [14] = "┬", [13] = "┴", [15] = "┼" }
 local S -- the open graph
 
 local function esc(s) return (s:gsub("%%", "%%%%")) end
 
 -- Lanes ----------------------------------------------------------------------------------------
 -- S.lanes[i] is the lane in column i ({ sha = commit it waits for, color }) or false when free.
+-- Packed like VS Code: a new lane takes the leftmost free column, even one freed on the same row, and gaps
+-- close one column per row.
 
 local function lane_hl(lane) return "AosGraphLane" .. lane.color end
 
@@ -28,22 +31,34 @@ local function new_lane(sha)
   return { sha = sha, color = S.color }
 end
 
-local function free_slot(lanes, reserved)
+local function free_slot(lanes)
   local i = 1
-  while lanes[i] or reserved[i] do i = i + 1 end
+  while lanes[i] do i = i + 1 end
   return i
 end
 
-local function link_parent(lanes, links, reserved, col, sha)
+local function link_parent(lanes, links, col, sha)
   for j = 1, #lanes do
     if j ~= col and lanes[j] and lanes[j].sha == sha then
       links[#links + 1] = { j, "join", lanes[j] }
       return
     end
   end
-  local j = free_slot(lanes, reserved)
-  lanes[j], reserved[j] = new_lane(sha), true
+  local j = free_slot(lanes)
+  lanes[j] = new_lane(sha)
   links[#links + 1] = { j, "start", lanes[j] }
+end
+
+-- A lane passing straight down slides one column left into a free one (╱ in the cell between) unless it
+-- carries a link of this row or a link's horizontal runs through that cell.
+local function collapse(lanes, links, col)
+  local lo, hi, linked = col, col, { [col] = true }
+  for _, l in ipairs(links) do lo, hi, linked[l[1]] = math.min(lo, l[1]), math.max(hi, l[1]), true end
+  for i = 2, #lanes do
+    if lanes[i] and not lanes[i - 1] and not linked[i] and i - 1 ~= col and (i - 1 >= hi or i <= lo) then
+      lanes[i - 1], lanes[i] = lanes[i], false
+    end
+  end
 end
 
 -- Cells to a string plus merged highlight runs { start_byte, end_byte, group }.
@@ -59,51 +74,70 @@ local function join(cells)
   return table.concat(parts), hls
 end
 
--- Column i sits in cell 2i-1; the cell between two columns carries horizontal links.
--- Cells stop at MAX_ART: a wider graph ends in "…" followed by the node when it sits beyond.
-local function draw(c)
-  local width = math.max(#c.before, #c.below, c.col)
-  local n, at = math.min(2 * width - 1, MAX_ART), 2 * c.col - 1
-  local cells = {}
-  for i = 1, n do cells[i] = { " " } end
+-- Link endpoints as direction bits per cell plus the horizontal runs to them; nearer links come last so their
+-- colour wins where runs overlap.
+local function link_cells(c)
+  local ends, span, at = {}, {}, 2 * c.col - 1
   table.sort(c.links, function(a, b) return math.abs(a[1] - c.col) > math.abs(b[1] - c.col) end)
   for _, l in ipairs(c.links) do
-    for p = 2 * math.min(l[1], c.col), math.min(2 * math.max(l[1], c.col) - 2, n) do cells[p] = { "─", lane_hl(l[3]) } end
+    local p = 2 * l[1] - 1
+    local e = ends[p] or { bits = 0 }
+    e.bits, e.lane = bit.bor(e.bits, l[2] == "end" and U or l[2] == "start" and D or U + D, p > at and L or R), l[3]
+    ends[p] = e
+    for q = math.min(p, at) + 1, math.max(p, at) - 1 do span[q] = l[3] end
   end
-  for i = 1, (n + 1) / 2 do
-    if c.before[i] and c.below[i] then cells[2 * i - 1] = { "│", lane_hl(c.below[i]) } end
+  return ends, span
+end
+
+-- Column i sits in cell 2i-1; the cell between two columns carries horizontals and ╱ slides. A horizontal
+-- crossing a lane passes under it.
+local function glyph(c, p, ends, span)
+  if p == 2 * c.col - 1 then return c.head and "◉" or #c.parents > 1 and "○" or "●", c.head and "AosGraphHead" or lane_hl(c.node) end
+  local e = ends[p]
+  if e then return BOX[bit.bor(e.bits, span[p] and L + R or 0)], lane_hl(e.lane) end
+  local up = p % 2 == 1 and c.before[(p + 1) / 2]
+  if up and c.below[(p + 1) / 2] == up then return "│", lane_hl(up) end
+  if span[p] then return "─", lane_hl(span[p]) end
+  local slide = p % 2 == 0 and c.before[p / 2 + 1]
+  if slide and c.below[p / 2] == slide then return "╱", lane_hl(slide) end
+  return " "
+end
+
+local function hidden(c)
+  local k = 0
+  for i = MAX_LANES + 1, math.max(#c.before, #c.below, c.col) do
+    if c.before[i] or c.below[i] or i == c.col then k = k + 1 end
   end
-  local far = {}
-  for _, l in ipairs(c.links) do
-    local side, p = l[1] > c.col and 2 or 1, 2 * l[1] - 1
-    if p <= n then cells[p] = { far[side] and tee[l[2]] or corner[l[2]][side], lane_hl(l[3]) } end
-    far[side] = true
-  end
-  local node = { c.head and "◉" or #c.parents > 1 and "○" or "●", c.head and "AosGraphHead" or lane_hl(c.node) }
-  if at <= n then cells[at] = node end
-  if 2 * width - 1 > MAX_ART then cells[n - 1], cells[n] = { "…", "AosFaint" }, at > n - 2 and node or nil end
+  return k
+end
+
+-- Past MAX_LANES the first lanes stay exact, followed by "+k" hidden lanes and the node when it is one of them.
+local function draw(c)
+  local n, cap = 2 * math.max(#c.before, #c.below, c.col) - 1, 2 * MAX_LANES - 1
+  local ends, span = link_cells(c)
+  local cells = {}
+  for p = 1, math.min(n, cap) do cells[p] = { glyph(c, p, ends, span) } end
+  if n > cap then cells[#cells + 1] = { " +" .. hidden(c) .. (c.col > MAX_LANES and " " or ""), "AosFaint" } end
+  if c.col > MAX_LANES then cells[#cells + 1] = { glyph(c, 2 * c.col - 1, ends, span) } end
   c.art, c.art_hl = join(cells)
 end
 
 -- Places commit `c` into S.lanes: c.col, c.before/c.below (lanes above/below the row), c.links, c.art.
 local function layout(c)
-  local lanes, before, links, reserved, col = S.lanes, {}, {}, {}, nil
+  local lanes, links, col = S.lanes, {}, nil
+  local before = { unpack(lanes) }
   for i = 1, #lanes do
-    before[i] = lanes[i]
     if lanes[i] and lanes[i].sha == c.sha and col then
-      links[#links + 1], lanes[i], reserved[i] = { i, "end", lanes[i] }, false, true
+      links[#links + 1], lanes[i] = { i, "end", lanes[i] }, false
     elseif lanes[i] and lanes[i].sha == c.sha then
       col = i
     end
   end
-  if not col then
-    col = free_slot(lanes, reserved)
-    lanes[col] = new_lane(c.sha)
-  end
-  local node = lanes[col]
+  col = col or free_slot(lanes)
+  local node = lanes[col] or new_lane(c.sha)
   lanes[col] = c.parents[1] and { sha = c.parents[1], color = node.color } or false
-  reserved[col] = true
-  for k = 2, #c.parents do link_parent(lanes, links, reserved, col, c.parents[k]) end
+  for k = 2, #c.parents do link_parent(lanes, links, col, c.parents[k]) end
+  collapse(lanes, links, col)
   while #lanes > 0 and not lanes[#lanes] do lanes[#lanes] = nil end
   c.col, c.node, c.links, c.before, c.below = col, node, links, before, { unpack(lanes) }
   draw(c)
@@ -111,12 +145,12 @@ end
 
 -- Lanes passing below a commit, for its expanded file rows.
 local function continuation(c)
-  local n, cells = math.min(#c.below * 2 - 1, MAX_ART), {}
+  local n, cells = math.min(#c.below * 2 - 1, 2 * MAX_LANES - 1), {}
   for i = 1, n do cells[i] = { " " } end
   for i = 1, (n + 1) / 2 do
     if c.below[i] then cells[2 * i - 1] = { "│", lane_hl(c.below[i]) } end
   end
-  if #c.below * 2 - 1 > MAX_ART then cells[n - 1], cells[n] = { "…", "AosFaint" }, nil end
+  if #c.below > MAX_LANES then cells[#cells + 1] = { " …", "AosFaint" } end
   return join(cells)
 end
 
@@ -157,6 +191,16 @@ local function parse_files(out)
     end
   end
   return files
+end
+
+-- `show-ref --head -d`: tip commit per walked ref, annotated tags peeled.
+local function parse_tips(out)
+  local tips = {}
+  for sha, ref in out:gmatch("(%x+) (%S+)") do
+    ref = ref:gsub("%^{}$", "")
+    if ref == "HEAD" or ref:find("^refs/heads/") or ref:find("^refs/remotes/") or ref:find("^refs/tags/") then tips[ref] = sha end
+  end
+  return tips
 end
 
 -- Rows -----------------------------------------------------------------------------------------
@@ -218,9 +262,9 @@ local function file_line(c, f)
   c.cont = c.cont or { continuation(c) }
   local b = with_art(c.cont[1], c.cont[2])
   add(b, "   ")
-  if f.error then
-    add(b, "✗ · ", "AosFailed")
-    add(b, (vim.trim(f.error):gsub("\n", " ")))
+  if f.note then
+    add(b, f.note[1] .. " · ", f.note[2])
+    add(b, (vim.trim(f.note[3]):gsub("\n", " ")), f.note[4])
     return table.concat(b.parts), b.hls
   end
   local dir, name = f.path:match("^(.*)/([^/]*)$")
@@ -241,7 +285,9 @@ local function matches(c)
   return c.search:find(S.filter, 1, true) ~= nil
 end
 
-local function note(glyph, hl, text) return glyph .. " · " .. text, { { 0, #glyph, hl } } end
+local function note(g, hl, text) return g .. " · " .. text, { { 0, #g, hl } } end
+
+local LOADING_FILES = { { note = { "◆", "AosRunning", "loading…", "AosDim" } } }
 
 -- Rebuilds the buffer from S.commits; highlights are drawn per visible line by the decoration provider.
 local function render()
@@ -254,10 +300,11 @@ local function render()
   end
   for _, c in ipairs(S.commits) do
     if matches(c) then push({ c = c }, commit_line(c, width)) end
-    local files = matches(c) and S.open[c.sha] and (S.files[c.sha] or { { error = "loading…" } }) or {}
+    local files = matches(c) and S.open[c.sha] and (S.files[c.sha] or LOADING_FILES) or {}
     for _, f in ipairs(files) do push({ c = c, f = f }, file_line(c, f)) end
   end
   if S.error then push(nil, note("✗", "AosFailed", (vim.trim(S.error):gsub("\n", " "))))
+  elseif S.slow then push(nil, note("○", "AosDim", "log paused · slow repo"))
   elseif S.loading then push(nil, note("◆", "AosRunning", "loading…"))
   elseif #lines == 0 then push(nil, note("○", "AosDim", S.filter ~= "" and ("no match for " .. S.filter) or "no commits yet"))
   elseif not S.done then push(nil, note("▸", "AosDim", "more on scroll")) end
@@ -267,20 +314,41 @@ local function render()
   vim.bo[S.buf].modifiable = false
 end
 
+local function quiet(text) vim.api.nvim_echo({ { "○ " .. text, "AosDim" } }, false, {}) end
+
 -- Loading --------------------------------------------------------------------------------------
+-- Every read goes through `job`: one run per key, a new one kills the one it supersedes (whose callback is
+-- then dropped), and repo.run cuts it at 3 s, after which that feature reports itself paused.
+
+local function job(key, args, cb, opts)
+  local s, h = S, nil
+  if s.jobs[key] then pcall(s.jobs[key].kill, s.jobs[key], 15) end
+  h = repo.run(args, s.root, function(...)
+    if S ~= s or s.jobs[key] ~= h then return end
+    s.jobs[key] = nil
+    cb(...)
+  end, opts)
+  s.jobs[key] = h
+end
+
+local function cancel(key)
+  local h = S.jobs[key]
+  S.jobs[key] = nil
+  if h then pcall(h.kill, h, 15) end
+end
 
 local load
 
--- The row under the cursor as { sha, path?, line }.
+-- The row under the cursor as { sha, path?, line, upto = commits loaded then }.
 local function anchor()
   if not vim.api.nvim_win_is_valid(S.win) then return end
   local line = vim.api.nvim_win_get_cursor(S.win)[1]
   local row = S.rows[line]
-  return row and { sha = row.c.sha, path = row.f and row.f.path, line = line }
+  return row and { sha = row.c.sha, path = row.f and row.f.path, line = line, upto = #S.commits }
 end
 
--- Puts the cursor back on the row it was on before a refresh or when the graph last closed;
--- one extra page is loaded when that commit has not arrived yet.
+-- Puts the cursor back on the row it was on before a refresh or when the graph last closed; pages keep loading
+-- (each its own budgeted run) until as many commits are back as there were then.
 local function restore()
   local last = S.restore
   if not (last and vim.api.nvim_win_is_valid(S.win)) then return end
@@ -290,110 +358,106 @@ local function restore()
       return vim.api.nvim_win_set_cursor(S.win, { i, 0 })
     end
   end
-  if not (S.done or last.more) then
-    last.more = true
-    return load()
-  end
+  if not S.done and not S.slow and #S.commits < (last.upto or 0) + PAGE then return load() end
   S.restore = nil
   vim.api.nvim_win_set_cursor(S.win, { math.min(last.line, vim.api.nvim_buf_line_count(S.buf)), 0 })
 end
 
--- A refresh keeps the old rows on screen and reloads as many commits as were shown, then swaps them in.
-function load()
-  if S.loading or S.done then return end
-  S.loading = true
-  local gen, reset = S.gen, S.reset
-  local count = reset and math.max(PAGE, #S.commits) or PAGE
-  local args = { "log", "--topo-order", "--decorate=full", "--format=" .. FORMAT, "--skip=" .. (reset and 0 or #S.commits), "-n", tostring(count) }
-  vim.list_extend(args, S.all and { "--branches", "--remotes", "--tags", "HEAD", "--" } or { "HEAD", "--" })
-  repo.run(args, S.root, function(ok, out, err)
-    if not S or gen ~= S.gen then return end
-    local t0, n = vim.uv.hrtime(), 0
-    S.loading = false
-    if reset then S.restore, S.commits, S.lanes, S.color, S.reset = anchor() or S.restore, {}, {}, 0, nil end
-    if not ok and not vim.iter(UNBORN):any(function(m) return err:find(m, 1, true) end) then S.error = err end
-    for line in out:gmatch("[^\n]+") do
-      local c = parse(line)
-      layout(c)
-      S.commits[#S.commits + 1], n = c, n + 1
-    end
-    S.done = n < count
-    render()
-    restore()
-    S.ms = (vim.uv.hrtime() - t0) / 1e6
-  end)
+-- A later page starts where the loaded part ends instead of re-walking it with --skip: from the commits the
+-- open lanes wait for plus every walked ref tip not loaded yet. None of their ancestors is loaded (topo order
+-- shows a commit only after all its children), so the pages join into one valid topological order.
+local function frontier()
+  local seen, list = {}, {}
+  local function want(sha)
+    if sha and not seen[sha] and not S.loaded[sha] then seen[sha], list[#list + 1] = true, sha end
+  end
+  for _, lane in ipairs(S.lanes) do want(lane and lane.sha) end
+  for _, sha in pairs(S.all and S.tips or {}) do want(sha) end
+  return list
+end
+
+local function unborn(err) return vim.iter(UNBORN):any(function(m) return err:find(m, 1, true) end) end
+
+local function loaded(reset, count, ok, out, err, slow)
+  S.loading = false
+  if slow then
+    S.slow, S.reset = true, nil
+    return render()
+  end
+  if reset then S.restore, S.commits, S.loaded, S.lanes, S.color, S.reset = anchor() or S.restore, {}, {}, {}, 0, nil end
+  if not ok and not unborn(err) then S.error = err end
+  local n = 0
+  for line in out:gmatch("[^\n]+") do
+    local c = parse(line)
+    layout(c)
+    S.commits[#S.commits + 1], S.loaded[c.sha], n = c, true, n + 1
+  end
+  S.done = not ok or n < count
   render()
+  restore()
+end
+
+-- A refresh keeps the old rows on screen and reloads as many commits as were shown (up to RELOAD), then swaps.
+function load()
+  if S.loading or S.done or S.slow then return end
+  local reset = S.reset
+  if not reset and S.all and not S.tips then
+    S.want = true
+    return
+  end
+  local count = reset and math.max(PAGE, math.min(#S.commits, RELOAD)) or PAGE
+  local args, stdin = { "log", "--topo-order", "--decorate=full", "--format=" .. FORMAT, "-n", tostring(count) }, nil
+  if reset then
+    vim.list_extend(args, S.all and WALK or { "HEAD" })
+  else
+    stdin = frontier()
+    if #stdin == 0 then
+      S.done = true
+      return render()
+    end
+    args[#args + 1] = "--stdin"
+  end
+  args[#args + 1] = "--"
+  S.loading = true
+  job("log", args, function(...) loaded(reset, count, ...) end, { feature = "graph", stdin = stdin and table.concat(stdin, "\n") .. "\n" })
+  render()
+end
+
+-- Refreshes only when a ref or HEAD moved, so focus and file events cost one `show-ref` on a big repo; also
+-- keeps S.tips for paging.
+local function check()
+  if not S then return end
+  job("refs", { "show-ref", "--head", "-d" }, function(_, out, _, slow)
+    if slow then
+      S.tips = S.tips or {}
+    elseif S.refs and out ~= S.refs then
+      return M.refresh()
+    else
+      S.refs, S.tips = out, parse_tips(out)
+    end
+    if S.want then
+      S.want = nil
+      load()
+    end
+  end, { feature = "graph refs" })
 end
 
 function M.refresh()
   if not S then return end
-  S.gen = S.gen + 1
-  S.reset, S.done, S.loading, S.error = true, false, false, nil
+  S.reset, S.done, S.loading, S.error, S.slow, S.refs, S.tips, S.want = true, false, false, nil, nil, nil, nil, nil
   repo.status(S.root, function(st)
     if not S then return end
     S.status = st
     vim.cmd.redrawstatus({ bang = true })
   end)
-  repo.run({ "show-ref", "--head" }, S.root, function(_, out) if S then S.refs = out end end)
+  check()
   load()
-end
-
--- Refreshes only when a ref or HEAD moved, so focus and file events cost one `show-ref` on a big repo.
-local function check()
-  if not S then return end
-  repo.run({ "show-ref", "--head" }, S.root, function(_, out)
-    if S and out ~= S.refs then M.refresh() end
-  end)
 end
 
 local function poke()
   if not S then return end
   S.timer:stop()
   S.timer:start(200, 0, vim.schedule_wrap(check))
-end
-
-local HINTS = { "/ filter", "b branches", "⏎ files", "K show", "c checkout", "y yank", "r refresh", "O open", "q close" }
-
--- Winbar segments as { text, group }; the key hints are dropped whole from the end when the popup is narrow.
-function M.header()
-  if not S then return "" end
-  local segs = { { " ❯ ", "AosPrompt" }, { "git log --graph " .. (S.all and "--all" or "HEAD") .. " ", "AosArg" } }
-  local st = S.status
-  if st then
-    segs[#segs + 1] = { " " .. (st.branch or ("HEAD " .. (st.oid or ""):sub(1, 7))) .. " ", "AosSegCyan" }
-    if st.upstream then segs[#segs + 1] = { (" ↑%d ↓%d"):format(st.ahead or 0, st.behind or 0), "AosDim" } end
-  end
-  if S.filter ~= "" then segs[#segs + 1] = { " /" .. S.filter, "AosRunning" } end
-  local room = vim.api.nvim_win_get_width(S.win) - vim.iter(segs):fold(0, function(n, x) return n + vim.api.nvim_strwidth(x[1]) end)
-  for _, h in ipairs(HINTS) do
-    room = room - vim.api.nvim_strwidth(h) - 3
-    if room < 0 then break end
-    segs[#segs + 1] = { " · " .. h, "AosFaint" }
-  end
-  return table.concat(vim.tbl_map(function(x) return "%#" .. x[2] .. "#" .. esc(x[1]) end, segs))
-end
-
--- Actions --------------------------------------------------------------------------------------
-
-local function current()
-  return S.rows[vim.api.nvim_win_get_cursor(0)[1]]
-end
-
-local function fetch_files(c)
-  local args = { "diff-tree", "-r", "-z", "--name-status", "-M", "--no-commit-id" }
-  vim.list_extend(args, c.parents[1] and { c.parents[1], c.sha } or { "--root", c.sha })
-  repo.run(args, S.root, function(ok, out, err)
-    if not S then return end
-    S.files[c.sha] = ok and parse_files(out) or { { error = err } }
-    if ok and #S.files[c.sha] == 0 then S.files[c.sha] = { { error = "no changes" } } end
-    render()
-  end)
-end
-
-local function toggle(c)
-  S.open[c.sha] = not S.open[c.sha] or nil
-  if S.open[c.sha] and not S.files[c.sha] then fetch_files(c) end
-  render()
 end
 
 -- Popup ----------------------------------------------------------------------------------------
@@ -411,12 +475,47 @@ local function panes(split)
   }
 end
 
+local function when_closed(win, fn, group)
+  vim.api.nvim_create_autocmd("WinClosed", { group = group, pattern = tostring(win), once = true, callback = function() vim.schedule(fn) end })
+end
+
 local function open_file(path)
   local file = S.root .. "/" .. path
   M.close()
   if not vim.uv.fs_stat(file) then return vim.notify("✗ " .. path .. " is not in the working tree", vim.log.levels.WARN) end
   vim.cmd.edit(vim.fn.fnameescape(file))
 end
+
+local function text_buf(lines)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable, vim.bo[buf].bufhidden = false, "wipe"
+  return buf
+end
+
+-- A small float over the graph; q, <Esc>, K, g? or leaving it closes it.
+local function info_float(buf, lines, title)
+  local widest = vim.iter(lines):fold(60, function(m, l) return math.max(m, vim.api.nvim_strwidth(l)) end)
+  local width = math.min(widest + 2, vim.o.columns - 6)
+  local height = math.min(#lines, vim.o.lines - 6)
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor", style = "minimal", width = width, height = height, row = math.floor((vim.o.lines - height) / 3),
+    col = math.floor((vim.o.columns - width) / 2), title = title, title_pos = "left", zindex = 60,
+  })
+  vim.wo[win].wrap = true
+  local function close() pcall(vim.api.nvim_win_close, win, true) end
+  for _, lhs in ipairs({ "q", "<Esc>", "K", "g?" }) do vim.keymap.set("n", lhs, close, { buffer = buf, nowait = true, desc = "close" }) end
+  vim.api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true, callback = close })
+end
+
+local function help(section)
+  local lines = vim.tbl_map(function(k) return ("%-7s %s"):format(k[1], k[2]) end, section.keys)
+  local buf = text_buf(lines)
+  for i, k in ipairs(section.keys) do vim.hl.range(buf, fns, "AosArg", { i - 1, 0 }, { i - 1, #k[1] }) end
+  info_float(buf, lines, " ❯ keys · " .. section.section .. " ")
+end
+
+-- Diff -----------------------------------------------------------------------------------------
 
 local function close_diff()
   local d = S and S.diff
@@ -429,10 +528,28 @@ local function close_diff()
   vim.api.nvim_set_current_win(S.win)
 end
 
-local function diff_keys(buf, d, path)
-  local function other() vim.api.nvim_set_current_win(d.wins[vim.api.nvim_get_current_win() == d.wins[1] and 2 or 1]) end
-  local maps = { q = close_diff, ["<Esc>"] = close_diff, ["<Tab>"] = other, ["<C-l>"] = other, ["<C-h>"] = other, O = function() open_file(path) end }
-  for lhs, fn in pairs(maps) do vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true }) end
+local function other_side()
+  local w = S and S.diff and S.diff.wins
+  if w then vim.api.nvim_set_current_win(w[vim.api.nvim_get_current_win() == w[1] and 2 or 1]) end
+end
+
+-- { lhs, fn (nil: a native key listed for help), what it does }.
+local DIFF_KEYS = {
+  { "]c", nil, "next change" },
+  { "[c", nil, "previous change" },
+  { "<Tab>", other_side, "other side" },
+  { "<C-l>", other_side, "other side" },
+  { "<C-h>", other_side, "other side" },
+  { "O", function() if S and S.diff then open_file(S.diff.path) end end, "open the file in the working tree (closes the graph)" },
+  { "g?", function() help(M.keys[2]) end, "this help" },
+  { "q", close_diff, "back to the graph" },
+  { "<Esc>", close_diff, "back to the graph" },
+}
+
+local function map_keys(buf, list)
+  for _, k in ipairs(list) do
+    if k[2] then vim.keymap.set("n", k[1], k[2], { buffer = buf, nowait = true, desc = k[3] }) end
+  end
 end
 
 local function scratch(name, text, path)
@@ -455,43 +572,83 @@ local function first_change(win)
   end)
 end
 
+-- Each side titled with its own path, so a rename shows the old path on the old side.
+local function diff_title(i, rev, path, renamed)
+  if i == 1 then return { { " ❯ ", "AosPrompt" }, { "diff ", "AosArg" }, { path .. "  ", "FloatTitle" }, { rev .. " ", "AosSha" } } end
+  local t = { { " ↔ ", "AosDim" }, { rev .. " ", "AosSha" } }
+  if renamed then table.insert(t, 2, { path .. "  ", "FloatTitle" }) end
+  return t
+end
+
 -- Replaces the graph with old ↔ new floats in the same rectangle; q brings the graph back at its cursor.
 local function show_diff(c, f, old, new)
   if not (S and vim.api.nvim_win_is_valid(S.win)) then return end
   close_diff()
-  local p7, s7, old_path = c.parents[1] and c.parents[1]:sub(1, 7) or "root", c.sha:sub(1, 7), f.orig or f.path
-  local sides = { { p7, old, old_path }, { s7, new, f.path } }
-  local d = { diffopt = vim.o.diffopt, wins = {} }
+  local p7, s7 = c.parents[1] and c.parents[1]:sub(1, 7) or "root", c.sha:sub(1, 7)
+  local sides = { { p7, old, f.orig or f.path }, { s7, new, f.path } }
+  local d = { diffopt = vim.o.diffopt, wins = {}, path = f.path }
   S.diff, vim.o.diffopt = d, DIFFOPT
   vim.api.nvim_win_set_config(S.win, { hide = true })
   for i, cfg in ipairs(panes(0.5)) do
     local rev, text, path = unpack(sides[i])
-    cfg.style, cfg.title_pos = "minimal", "left"
-    cfg.title = i == 1 and { { " ❯ ", "AosPrompt" }, { "diff ", "AosArg" }, { f.path .. "  ", "FloatTitle" }, { rev .. " ", "AosSha" } }
-      or { { " ↔ ", "AosDim" }, { rev .. " ", "AosSha" } }
+    cfg.style, cfg.title_pos, cfg.title = "minimal", "left", diff_title(i, rev, path, f.orig ~= nil)
     local buf = scratch(("gitgraph://%s/%s"):format(rev, path), text, path)
     d.wins[i] = vim.api.nvim_open_win(buf, i == 2, cfg)
     vim.wo[d.wins[i]].number, vim.wo[d.wins[i]].cursorline = true, true
     vim.api.nvim_win_call(d.wins[i], function() vim.cmd.diffthis() end)
-    diff_keys(buf, d, f.path)
-    vim.api.nvim_create_autocmd("WinClosed", {
-      pattern = tostring(d.wins[i]), once = true,
-      callback = function() vim.schedule(function() if S and S.diff == d then close_diff() end end) end,
-    })
+    map_keys(buf, DIFF_KEYS)
+    when_closed(d.wins[i], function() if S and S.diff == d then close_diff() end end)
   end
   first_change(d.wins[2])
 end
 
 local function open_diff(c, f)
-  local texts, pending = {}, 2
+  local texts, pending, slow = {}, 2, false
   local function got(key)
-    return function(text)
-      texts[key], pending = text or "", pending - 1
-      if pending == 0 then show_diff(c, f, texts.old, texts.new) end
+    return function(ok, out, _, timed_out)
+      texts[key], pending, slow = ok and out or "", pending - 1, slow or timed_out
+      if pending > 0 then return end
+      if slow then return quiet("diff paused · slow repo") end
+      show_diff(c, f, texts.old, texts.new)
     end
   end
-  if c.parents[1] then repo.show(S.root, c.parents[1], f.orig or f.path, got("old")) else got("old")("") end
-  repo.show(S.root, c.sha, f.path, got("new"))
+  local opts = { feature = "graph diff" }
+  if c.parents[1] then job("diff old", { "show", c.parents[1] .. ":" .. (f.orig or f.path) }, got("old"), opts) else got("old")(true, "") end
+  job("diff new", { "show", c.sha .. ":" .. f.path }, got("new"), opts)
+end
+
+-- Actions --------------------------------------------------------------------------------------
+
+local function current()
+  return S.rows[vim.api.nvim_win_get_cursor(0)[1]]
+end
+
+local function file_rows(ok, out, err, slow)
+  if slow then return { { note = { "○", "AosDim", "files paused · slow repo", "AosDim" } } } end
+  if not ok then return { { note = { "✗", "AosFailed", err } } } end
+  local files = parse_files(out)
+  if #files == 0 then return { { note = { "○", "AosDim", "no changes", "AosDim" } } } end
+  if #files <= MAX_FILES then return files end
+  local more = #files - MAX_FILES
+  files = vim.list_slice(files, 1, MAX_FILES)
+  files[#files + 1] = { note = { "○", "AosDim", more .. " more files · K for the stat", "AosDim" } }
+  return files
+end
+
+-- `show` vs the first parent (a merge lists what it brought in); `show` is a budgeted read, unlike diff-tree.
+local function fetch_files(c)
+  local args = { "show", "--format=", "--name-status", "-z", "-M", "--diff-merges=first-parent", c.sha }
+  job("files " .. c.sha, args, function(ok, out, err, slow)
+    S.files[c.sha] = file_rows(ok, out, err, slow)
+    render()
+  end, { feature = "graph files" })
+end
+
+local function toggle(c)
+  S.open[c.sha] = not S.open[c.sha] or nil
+  if S.open[c.sha] and not S.files[c.sha] then fetch_files(c) end
+  if not S.open[c.sha] then cancel("files " .. c.sha) end
+  render()
 end
 
 local function stat_hls(buf, i, line)
@@ -515,34 +672,23 @@ local function show_float(c, out)
   local stat_at = #lines + 1
   stat = (stat or ""):gsub("^\n+", ""):gsub("%s+$", "")
   if stat ~= "" then vim.list_extend(lines, vim.split("\n" .. stat, "\n", { plain = true })) end
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  local buf = text_buf(lines)
   for i, l in ipairs(labels) do
     vim.hl.range(buf, fns, "AosDim", { i - 1, 0 }, { i - 1, 9 })
     vim.hl.range(buf, fns, l[3], { i - 1, 10 }, { i - 1, -1 })
   end
   vim.hl.range(buf, fns, "Title", { body_at, 0 }, { body_at, -1 })
   for i = stat_at + 1, #lines do stat_hls(buf, i - 1, lines[i]) end
-  vim.bo[buf].modifiable, vim.bo[buf].bufhidden = false, "wipe"
-  local widest = vim.iter(lines):fold(60, function(m, l) return math.max(m, vim.api.nvim_strwidth(l)) end)
-  local width = math.min(widest + 2, vim.o.columns - 6)
-  local height = math.min(#lines, vim.o.lines - 6)
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor", style = "minimal", width = width, height = height, row = math.floor((vim.o.lines - height) / 3),
-    col = math.floor((vim.o.columns - width) / 2), title = " ❯ show " .. sha:sub(1, 7) .. " ", title_pos = "left", zindex = 60,
-  })
-  vim.wo[win].wrap = true
-  local function close() pcall(vim.api.nvim_win_close, win, true) end
-  for _, lhs in ipairs({ "q", "<Esc>", "K" }) do vim.keymap.set("n", lhs, close, { buffer = buf, nowait = true }) end
-  vim.api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true, callback = close })
+  info_float(buf, lines, " ❯ show " .. sha:sub(1, 7) .. " ")
 end
 
 local function show(c)
   local args = { "show", "--stat=100", "--stat-count=300", "--diff-merges=first-parent", "--date=format:%Y-%m-%d %H:%M", "--format=%H%x00%an <%ae>%x00%ad%x00%B%x00", c.sha }
-  repo.run(args, S.root, function(ok, out, err)
+  job("show", args, function(ok, out, err, slow)
+    if slow then return quiet("show paused · slow repo") end
     if not ok then return vim.notify("✗ git show\n" .. err, vim.log.levels.ERROR) end
     show_float(c, out)
-  end)
+  end, { feature = "graph show" })
 end
 
 local function checkout_targets(c)
@@ -556,23 +702,15 @@ end
 
 local target_glyph = { remote = { "⇄", "AosSha" }, ["local"] = { "○", "AosId" }, detached = { "●", "AosDim" } }
 
+-- branch.checkout asks stash / carry over / cancel when local changes block the switch.
 local function checkout(c)
-  local root = S.root
-  local function go(t)
-    if not t then return end
-    branch.dirty(root, function(dirty)
-      local label = t.label or t.name
-      if dirty and vim.fn.confirm("Uncommitted changes. Check out " .. label .. " anyway?", "&Yes\n&No", 2) ~= 1 then return end
-      branch.checkout(root, t)
-    end)
-  end
-  local targets = checkout_targets(c)
-  if #targets == 1 then return go(targets[1]) end
+  local root, targets = S.root, checkout_targets(c)
+  if #targets == 1 then return branch.checkout(root, targets[1]) end
   local items = vim.tbl_map(function(t)
     local g = target_glyph[t.kind]
     return { glyph = g[1], hl = g[2], text = t.label or t.name, data = t }
   end, targets)
-  pick.open({ title = "checkout", items = items, on_choose = function(item) go(item.data) end })
+  pick.open({ title = "checkout", items = items, on_choose = function(item) branch.checkout(root, item.data) end })
 end
 
 local function on_row(fn)
@@ -591,27 +729,64 @@ local function set_filter()
   end)
 end
 
-local keys = {
-  ["<CR>"] = on_row(function(r) if r.f and r.f.path then open_diff(r.c, r.f) elseif not r.f then toggle(r.c) end end),
-  ["<Tab>"] = on_row(function(r) toggle(r.c) end),
-  K = on_row(function(r) show(r.c) end),
-  y = on_row(function(r)
-    vim.fn.setreg('"', r.c.sha)
-    pcall(vim.fn.setreg, "+", r.c.sha)
-    vim.notify("✓ yanked " .. r.c.sha:sub(1, 7))
-  end),
-  c = on_row(function(r) checkout(r.c) end),
-  r = function() M.refresh() end,
-  b = function() S.all = not S.all; M.refresh() end,
-  ["/"] = set_filter,
-  O = on_row(function(r) if r.f and r.f.path then open_file(r.f.path) end end),
-  ["<Esc>"] = function()
-    if S.filter == "" then return M.close() end
-    S.filter = ""
-    render()
-  end,
-  q = function() M.close() end,
+local function enter(r)
+  if r.f and r.f.path then return open_diff(r.c, r.f) end
+  if not r.f then toggle(r.c) end
+end
+
+local function yank(r)
+  vim.fn.setreg('"', r.c.sha)
+  pcall(vim.fn.setreg, "+", r.c.sha)
+  vim.notify("✓ yanked " .. r.c.sha:sub(1, 7))
+end
+
+local function clear_or_close()
+  if S.filter == "" then return M.close() end
+  S.filter = ""
+  render()
+end
+
+-- { lhs, fn, what it does, winbar hint? }; the winbar hints, g? and M.keys all come from this list.
+local GRAPH_KEYS = {
+  { "/", set_filter, "filter commits by subject, author or sha", "/ filter" },
+  { "b", function() S.all = not S.all; M.refresh() end, "all branches, remotes and tags ↔ HEAD only", "b branches" },
+  { "<CR>", on_row(enter), "expand / collapse the commit's files · on a file: side-by-side diff", "⏎ files" },
+  { "<Tab>", on_row(function(r) toggle(r.c) end), "expand / collapse the commit's files" },
+  { "K", on_row(function(r) show(r.c) end), "commit details: message and stat", "K show" },
+  { "c", on_row(function(r) checkout(r.c) end), "check out a branch on the commit, or the commit detached", "c checkout" },
+  { "y", on_row(yank), "yank the full sha", "y yank" },
+  { "r", function() M.refresh() end, "refresh", "r refresh" },
+  { "O", on_row(function(r) if r.f and r.f.path then open_file(r.f.path) end end), "open the file row's file (closes the graph)", "O open" },
+  { "g?", function() help(M.keys[1]) end, "this help", "g? keys" },
+  { "<Esc>", clear_or_close, "clear the filter, else close" },
+  { "q", function() M.close() end, "close", "q close" },
 }
+
+local function section(name, list)
+  return { section = name, keys = vim.tbl_map(function(k) return { k[1], k[3] } end, list) }
+end
+
+M.keys = { section("Git graph", GRAPH_KEYS), section("Git graph diff", DIFF_KEYS) }
+
+-- Winbar segments as { text, group }; the key hints are dropped whole from the end when the popup is narrow.
+function M.header()
+  if not S then return "" end
+  local walk = "git log --graph " .. table.concat(S.all and WALK or { "HEAD" }, " ") .. " "
+  local segs = { { " ❯ ", "AosPrompt" }, { walk, "AosArg" } }
+  local st = S.status
+  if st then
+    segs[#segs + 1] = { " " .. (st.branch or ("HEAD " .. (st.oid or ""):sub(1, 7))) .. " ", "AosSegCyan" }
+    if st.upstream then segs[#segs + 1] = { (" ↑%d ↓%d"):format(st.ahead or 0, st.behind or 0), "AosDim" } end
+  end
+  if S.filter ~= "" then segs[#segs + 1] = { " /" .. S.filter, "AosRunning" } end
+  local room = vim.api.nvim_win_get_width(S.win) - vim.iter(segs):fold(0, function(n, x) return n + vim.api.nvim_strwidth(x[1]) end)
+  for _, k in ipairs(GRAPH_KEYS) do
+    room = room - (k[4] and vim.api.nvim_strwidth(k[4]) + 3 or 0)
+    if room < 0 then break end
+    if k[4] then segs[#segs + 1] = { " · " .. k[4], "AosFaint" } end
+  end
+  return table.concat(vim.tbl_map(function(x) return "%#" .. x[2] .. "#" .. esc(x[1]) end, segs))
+end
 
 -- Window ---------------------------------------------------------------------------------------
 
@@ -619,13 +794,12 @@ function M.close()
   if not S then return end
   local s = S
   close_diff()
-  if vim.api.nvim_win_is_valid(s.win) then
-    local line = vim.api.nvim_win_get_cursor(s.win)[1]
-    M.last = { root = s.root, line = line, sha = s.rows[line] and s.rows[line].c.sha }
-  end
+  M.last = anchor()
+  if M.last then M.last.root, M.last.path = s.root, nil end
   S = nil
   s.timer:close()
-  for _, w in ipairs(s.watchers) do w:close() end
+  for _, w in pairs(s.watched) do w:close() end
+  for _, h in pairs(s.jobs) do pcall(h.kill, h, 15) end
   pcall(vim.api.nvim_del_augroup_by_name, "GitGraphBuf")
   pcall(vim.api.nvim_win_close, s.win, true)
   pcall(vim.api.nvim_buf_delete, s.buf, { force = true })
@@ -641,10 +815,7 @@ end
 
 local function autocmds(buf, win)
   local group = vim.api.nvim_create_augroup("GitGraphBuf", {})
-  vim.api.nvim_create_autocmd("WinClosed", {
-    group = group, pattern = tostring(win),
-    callback = function() vim.schedule(function() if S and S.win == win then M.close() end end) end,
-  })
+  when_closed(win, function() if S and S.win == win then M.close() end end, group)
   vim.api.nvim_create_autocmd("VimResized", { group = group, callback = reposition })
   vim.api.nvim_create_autocmd("CursorMoved", {
     group = group, buffer = buf,
@@ -653,16 +824,33 @@ local function autocmds(buf, win)
   vim.api.nvim_create_autocmd("FocusGained", { group = group, callback = poke })
 end
 
+local watch_tree
+
+-- `names` limits a git dir to HEAD/packed-refs; under refs/ a new entry that is a directory (refs/heads/feature/)
+-- gets watched too, since inotify is not recursive.
 local function watch(dir, names)
+  if S.watched[dir] then S.watched[dir]:close() end
   local w = vim.uv.new_fs_event()
   if not w then return end
   w:start(dir, {}, function(_, name)
-    if name and not name:match("%.lock$") and (not names or names[name]) then vim.schedule(poke) end
+    if not name or name:match("%.lock$") or (names and not names[name]) then return end
+    vim.schedule(function()
+      poke()
+      if not names then watch_tree(dir .. "/" .. name) end
+    end)
   end)
-  S.watchers[#S.watchers + 1] = w
+  S.watched[dir] = w
 end
 
--- inotify is not recursive: the git dirs (HEAD, packed-refs) plus every directory under refs/.
+function watch_tree(dir)
+  local st = S and vim.uv.fs_stat(dir)
+  if not (st and st.type == "directory") then return end
+  watch(dir)
+  for name, kind in vim.fs.dir(dir, { depth = 6 }) do
+    if kind == "directory" then watch(dir .. "/" .. name) end
+  end
+end
+
 local function watch_refs()
   local s = S
   repo.run({ "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir" }, S.root, function(ok, out)
@@ -671,11 +859,8 @@ local function watch_refs()
     local top = { HEAD = true, ["packed-refs"] = true }
     watch(git_dir, top)
     if common ~= git_dir then watch(common, top) end
-    watch(common .. "/refs")
-    for name, kind in vim.fs.dir(common .. "/refs", { depth = 6 }) do
-      if kind == "directory" then watch(common .. "/refs/" .. name) end
-    end
-  end)
+    watch_tree(common .. "/refs")
+  end, { feature = "graph refs" })
 end
 
 function M.open()
@@ -688,13 +873,13 @@ function M.open()
   local cfg = panes()[1]
   cfg.style, cfg.title, cfg.title_pos = "minimal", " ❯ git log ", "left"
   local win = vim.api.nvim_open_win(buf, true, cfg)
-  S = { root = root, buf = buf, win = win, origin = origin, all = true, filter = "", open = {}, files = {}, gen = 0, hls = {}, rows = {} }
-  S.commits, S.watchers, S.timer = {}, {}, assert(vim.uv.new_timer())
+  S = { root = root, buf = buf, win = win, origin = origin, all = true, filter = "", open = {}, files = {}, hls = {}, rows = {} }
+  S.commits, S.loaded, S.lanes, S.color, S.jobs, S.watched, S.timer = {}, {}, {}, 0, {}, {}, assert(vim.uv.new_timer())
   S.restore = M.last and M.last.root == root and M.last or nil
   vim.wo[win].cursorline, vim.wo[win].wrap, vim.wo[win].foldcolumn = true, false, "1"
   vim.wo[win].winbar = "%!v:lua.require'git.graph'.header()"
   vim.bo[buf].filetype = "gitgraph"
-  for lhs, fn in pairs(keys) do vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true }) end
+  map_keys(buf, GRAPH_KEYS)
   autocmds(buf, win)
   watch_refs()
   M.refresh()
