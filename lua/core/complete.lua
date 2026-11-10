@@ -406,7 +406,9 @@ function M.setup()
       llm_cancel()
     end,
   })
-  vim.api.nvim_create_autocmd("InsertEnter", { group = group, once = true, callback = llm_start })
+  local test = require("config.test")
+  if not test.allows("local") then M.mode = test.allows("copilot") and "copilot" or "off" end
+  if test.allows("local") then vim.api.nvim_create_autocmd("InsertEnter", { group = group, once = true, callback = llm_start }) end
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = group,
     callback = function()

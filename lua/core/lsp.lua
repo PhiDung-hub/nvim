@@ -85,9 +85,13 @@ local function start()
     if vim.api.nvim_buf_is_valid(buf) and too_big(buf) then return end
     return lsp_start(config, opts)
   end
-  vim.lsp.enable(servers)
+  local test = require("config.test")
+  if test.allows("lsp") then
+    vim.lsp.enable(vim.tbl_filter(function(n) return n ~= "copilot" or test.allows("copilot") end, servers))
+  end
   for name, bin in pairs(extras) do
-    if vim.fn.executable(bin) == 1 then vim.lsp.enable(name) end
+    local want = name == "copilot" and test.allows("copilot") or name ~= "copilot" and test.allows("lsp")
+    if want and vim.fn.executable(bin) == 1 then vim.lsp.enable(name) end
   end
   vim.api.nvim_create_autocmd("LspAttach", { group = vim.api.nvim_create_augroup("CoreLsp", {}), callback = on_attach })
 
