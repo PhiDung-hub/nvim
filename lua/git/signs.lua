@@ -27,15 +27,32 @@ local function split(text)
   return { lines = lines, eol = eol, cr = cr }
 end
 
--- Diff input: always newline-terminated, so a missing final newline never makes a hunk of its own.
+-- Diff input: always newline-terminated; with_eol puts a change of the final newline back.
 local function join(t) return #t.lines == 0 and "" or table.concat(t.lines, "\n") .. "\n" end
+
+-- 'eol' keeps what was read from disk; 'fixeol' adds the newline once the buffer is modified or written.
+local function buf_eol(buf)
+  local bo = vim.bo[buf]
+  return bo.eol or bo.fixeol and not bo.binary and (bo.modified or vim.b[buf].git_written == true)
+end
 
 -- `cr`: the index copy's line endings, which lines added from the buffer take on.
 local function buf_text(buf, cr)
   local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
   if #lines == 1 and lines[1] == "" then lines = {} end
-  return { lines = lines, eol = vim.bo[buf].eol or vim.bo[buf].fixeol, cr = cr }
+  return { lines = lines, eol = buf_eol(buf), cr = cr }
 end
+
+-- join() hides a change of the final newline alone; like VS Code, it becomes a change of the last line.
+local function with_eol(hunks, old, new)
+  local last = hunks[#hunks]
+  if old.eol == new.eol or #old.lines == 0 or #new.lines == 0 then return hunks end
+  if last and (last[2] > 0 and last[1] + last[2] - 1 or last[1]) >= #old.lines then return hunks end
+  hunks[#hunks + 1] = { #old.lines, 1, #new.lines, 1 }
+  return hunks
+end
+
+local function diff(old, new) return with_eol(vim.text.diff(join(old), join(new), indices) --[[@as integer[][] ]], old, new) end
 
 local function slice(lines, start, count) return count > 0 and vim.list_slice(lines, start, start + count - 1) or {} end
 
@@ -143,7 +160,7 @@ end
 local function update(buf)
   local st = bufs[buf]
   if not st or not api.nvim_buf_is_valid(buf) then return end
-  st.hunks = st.index and vim.text.diff(join(st.index), join(buf_text(buf)), indices) or {}
+  st.hunks = st.index and diff(st.index, buf_text(buf)) or {}
   place(buf, st.hunks, st.conflict)
 end
 
@@ -202,12 +219,12 @@ local function locate(dir, cb)
 end
 
 -- The index copy, raw; mid-merge a conflicted path has no stage 0, so diff against ours (stage 2) like VS Code.
+-- Any failure tries stage 2, since git's "not at stage 0" is translated under other locales.
 local function read_index(root, rel, cb)
   local opts = { binary = true, feature = "gutter" }
-  repo.run({ "show", ":" .. rel }, root, function(ok, out, err)
-    if ok then return cb(out, false) end
-    if not err:find("not at stage 0", 1, true) then return cb(nil, false) end
-    repo.run({ "show", ":2:" .. rel }, root, function(ours_ok, ours) cb(ours_ok and ours or nil, true) end, opts)
+  repo.run({ "show", ":" .. rel }, root, function(ok, out, _, cut)
+    if ok or cut then return cb(ok and out or nil, false) end
+    repo.run({ "show", ":2:" .. rel }, root, function(ours_ok, ours) cb(ours_ok and ours or nil, ours_ok) end, opts)
   end, opts)
 end
 
@@ -332,46 +349,52 @@ end
 
 -- Zero-context hunks can't tell that the index moved (pure additions have no '-' lines to check),
 -- so stage and unstage run one at a time per buffer, each building its patch from a fresh index read.
--- A reload that never calls back (repo lookup cut, buffer turned big) frees the buffer after 3 s.
+-- A reload that never calls back (repo lookup cut, buffer turned big) frees the buffer after 3 s; once the
+-- operation has started, only its own token frees it (local writes always call back).
 local busy = {}
+
+local function release(token)
+  if busy[token.buf] == token then busy[token.buf] = nil end
+end
 
 local function exclusive(buf, fn)
   if busy[buf] then return say("◆ still applying the last change") end
-  local token = {}
+  local token = { buf = buf }
   busy[buf] = token
   vim.defer_fn(function()
-    if busy[buf] ~= token then return end
+    if busy[buf] ~= token or token.started then return end
     busy[buf] = nil
-    if not token.started then say("○ skipped · git did not answer within 3 s") end
+    say("○ skipped · git did not answer within 3 s")
     M.reload(buf)
   end, 3000)
   M.reload(buf, function()
     if busy[buf] ~= token then return end
     token.started = true
-    fn(bufs[buf])
+    fn(bufs[buf], token)
   end)
 end
 
-local function free(buf, msg)
-  busy[buf] = nil
+local function free(token, msg)
+  release(token)
   say(msg)
 end
 
-local function apply(st, text, args, cb)
+local function apply(st, token, text, args, cb)
   local cmd = vim.list_extend({ "apply", "--cached", "--unidiff-zero", "--whitespace=nowarn" }, args)
   repo.run(cmd, st.root, function(ok, _, err)
-    busy[st.buf] = nil
+    release(token)
     if ok then return cb() end
     say("✗ " .. vim.trim(err), "AosFailed")
     M.reload(st.buf)
   end, { stdin = text })
 end
 
-local function stage_now(st, buf, l1, l2, lnum, cb)
-  if not st.index then return free(buf, "○ not in the index: <leader>hS stages the file") end
+local function stage_now(st, token, l1, l2, lnum, cb)
+  local buf = token.buf
+  if not st.index then return free(token, "○ not in the index: <leader>hS stages the file") end
   local changes = targets(st, l1, l2, lnum)
-  if #changes == 0 then return free(buf, "○ no hunk here") end
-  apply(st, patch(st.rel, st.index, buf_text(buf, st.index.cr), changes), {}, function()
+  if #changes == 0 then return free(token, "○ no hunk here") end
+  apply(st, token, patch(st.rel, st.index, buf_text(buf, st.index.cr), changes), {}, function()
     say(("✓ staged %d %s"):format(#changes, #changes == 1 and "hunk" or "hunks"), "AosDone")
     M.reload(buf, cb)
   end)
@@ -385,7 +408,7 @@ end
 function M.stage(l1, l2, cb)
   local st, buf = current()
   local lnum = vim.fn.line(".")
-  if st and not conflicted(st) then exclusive(buf, function(fresh) stage_now(fresh, buf, l1, l2, lnum, cb) end) end
+  if st and not conflicted(st) then exclusive(buf, function(fresh, token) stage_now(fresh, token, l1, l2, lnum, cb) end) end
 end
 
 function M.revert(l1, l2)
@@ -398,6 +421,8 @@ function M.revert(l1, l2)
   for _, c in ipairs(changes) do
     local first = c[4] > 0 and c[3] or c[3] + 1
     api.nvim_buf_set_lines(buf, first - 1, first - 1 + c[4], false, slice(st.index.lines, c[1], c[2]))
+    local at_end = c[1] + math.max(c[2], 1) - 1 >= #st.index.lines
+    if at_end and buf_eol(buf) ~= st.index.eol then vim.bo[buf].eol, vim.bo[buf].fixeol = st.index.eol, st.index.eol end
   end
   update(buf)
   if #changes > 0 then say(("✓ reverted %d %s"):format(#changes, #changes == 1 and "hunk" or "hunks"), "AosDone") end
@@ -426,10 +451,11 @@ local function to_index(hunks, lnum)
   return lnum + delta
 end
 
-local function unstage_from(st, buf, head, orig, lnum)
+local function unstage_from(st, token, head, orig, lnum)
+  local buf = token.buf
   local function done(msg)
     return function(ok, _, err)
-      busy[buf] = nil
+      release(token)
       if ok == false then return say("✗ " .. vim.trim(err), "AosFailed") end
       say(msg, "AosDone")
       M.reload(buf)
@@ -437,13 +463,13 @@ local function unstage_from(st, buf, head, orig, lnum)
   end
   if not head then return repo.run({ "rm", "--cached", "-q", "--", st.rel }, st.root, done("✓ unstaged " .. st.rel)) end
   local base = split(head)
-  local staged = vim.text.diff(join(base), join(st.index), indices) --[[@as integer[][] ]]
+  local staged = diff(base, st.index)
   if #staged == 0 and orig then
     return repo.run({ "reset", "-q", "--", orig, st.rel }, st.root, done(("✓ unstaged rename %s → %s"):format(orig, st.rel)))
   end
-  if #staged == 0 then return free(buf, "○ nothing staged in " .. st.rel) end
+  if #staged == 0 then return free(token, "○ nothing staged in " .. st.rel) end
   local h = hunk_at(staged, to_index(st.hunks, lnum)) or staged[#staged]
-  apply(st, patch(st.rel, base, st.index, { h }), { "--reverse" }, done("✓ unstaged hunk"))
+  apply(st, token, patch(st.rel, base, st.index, { h }), { "--reverse" }, done("✓ unstaged hunk"))
 end
 
 local function staged_orig(s, rel)
@@ -474,11 +500,11 @@ function M.unstage()
   local st, buf = current()
   local lnum = vim.fn.line(".")
   if not st or conflicted(st) then return end
-  exclusive(buf, function(fresh)
-    if not fresh.index then return free(buf, "○ nothing staged in " .. fresh.rel) end
+  exclusive(buf, function(fresh, token)
+    if not fresh.index then return free(token, "○ nothing staged in " .. fresh.rel) end
     head_text(fresh, function(head, orig, cut)
-      if cut then return free(buf, "○ skipped · git did not answer within 3 s") end
-      unstage_from(fresh, buf, head, orig, lnum)
+      if cut then return free(token, "○ skipped · git did not answer within 3 s") end
+      unstage_from(fresh, token, head, orig, lnum)
     end)
   end)
 end
@@ -645,15 +671,20 @@ local function line_blame()
   blame.job = repo.run(blame_args(st, { "-L", lnum .. "," .. lnum }), st.root, done, { stdin = contents(buf), feature = "line blame" })
 end
 
-local function clear_line_blame(ev)
-  if blame.at and blame.at == ev.buf .. ":" .. vim.fn.line(".") and ev.event == "CursorMoved" then return end
+local function stop_line_blame()
   blame.at, blame.seq = nil, blame.seq + 1
   if blame.job and not blame.job:is_closing() then blame.job:kill(15) end
+end
+
+local function clear_line_blame(ev)
+  if blame.at and blame.at == ev.buf .. ":" .. vim.fn.line(".") and ev.event == "CursorMoved" then return end
+  stop_line_blame()
   api.nvim_buf_clear_namespace(ev.buf, blame_ns, 0, -1)
 end
 
 function M.toggle_blame()
-  blame.on, blame.at = not blame.on, nil
+  stop_line_blame()
+  blame.on = not blame.on
   for _, b in ipairs(api.nvim_list_bufs()) do api.nvim_buf_clear_namespace(b, blame_ns, 0, -1) end
   say(blame.on and "● line blame on" or "○ line blame off", blame.on and "AosDone" or "AosDim")
   line_blame()
@@ -693,10 +724,15 @@ local function paint_row(s, l)
   if not run then api.nvim_buf_set_extmark(s.buf, blame_ns, l - 1, #"▎", { end_col = row:find(" ", 1, true) - 1, hl_group = age_hl(c) }) end
 end
 
+-- 'modifiable' set from another buffer fires OptionSet in the column's context, where the tabline would redraw.
 local function set_rows(s, from, to, rows)
+  local ei = vim.o.eventignore
+  vim.opt.eventignore:append("OptionSet")
   vim.bo[s.buf].modifiable = true
-  api.nvim_buf_set_lines(s.buf, from, to, false, rows)
+  local ok, err = pcall(api.nvim_buf_set_lines, s.buf, from, to, false, rows)
   vim.bo[s.buf].modifiable = false
+  vim.o.eventignore = ei
+  assert(ok, err)
 end
 
 local function render_range(s, blamed, from, to)
@@ -728,7 +764,8 @@ end
 
 -- Blames what scrolled into view; a run for a range the view left is killed first.
 local function fill_split(s)
-  if not s or split_state ~= s or s.paused or s.failed or not api.nvim_win_is_valid(s.swin) or not bufs[s.src] then return end
+  if not s or split_state ~= s or s.paused or s.failed or s.contents == "" then return end
+  if not api.nvim_win_is_valid(s.swin) or not bufs[s.src] then return end
   local from, to = wanted(s)
   if not from or (s.want and s.want[1] <= from and s.want[2] >= to) then return end
   if s.job then s.job:kill(15) end
@@ -752,7 +789,8 @@ local function rerun_split()
   s.count, s.contents, s.lines, s.done = api.nvim_buf_line_count(s.src), contents(s.src), {}, {}
   s.seq, s.job, s.want, s.failed = s.seq + 1, nil, nil, nil
   local have = api.nvim_buf_line_count(s.buf)
-  set_rows(s, math.min(have, s.count), have, vim.fn["repeat"]({ "" }, math.max(s.count - have, 0)))
+  local keep = s.contents == "" and 0 or math.min(have, s.count)
+  set_rows(s, keep, have, vim.fn["repeat"]({ "" }, s.count - keep))
   fill_split(s)
 end
 
@@ -869,7 +907,10 @@ function M.setup()
   keymaps()
   local group = api.nvim_create_augroup("GitSigns", {})
   local au = function(ev, cb, opts) api.nvim_create_autocmd(ev, vim.tbl_extend("force", { group = group, callback = cb }, opts or {})) end
-  au({ "BufReadPost", "BufWritePost", "FileChangedShellPost" }, function(ev) M.reload(ev.buf) end)
+  au({ "BufReadPost", "BufWritePost", "FileChangedShellPost" }, function(ev)
+    vim.b[ev.buf].git_written = ev.event == "BufWritePost" or nil
+    M.reload(ev.buf)
+  end)
   au({ "TextChanged", "InsertLeave" }, debounced)
   au({ "BufWritePost", "FocusGained", "DirChanged", "ShellCmdPost" }, refresh_cwd)
   au("FocusGained", function() polling(true) end)
