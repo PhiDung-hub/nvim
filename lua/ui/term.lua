@@ -2,6 +2,16 @@
 local M = {}
 local state = { buf = nil, win = nil }
 
+M.keys = {
+  {
+    section = "Terminal",
+    keys = {
+      { "<M-->", "hide / show the float (the shell keeps running)", "n t" },
+      { "<Esc><leader>", "leave terminal mode", "t" },
+    },
+  },
+}
+
 function M.toggle()
   if state.win and vim.api.nvim_win_is_valid(state.win) then
     vim.api.nvim_win_hide(state.win)

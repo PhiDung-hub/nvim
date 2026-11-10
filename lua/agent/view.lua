@@ -5,6 +5,16 @@ local transport = require("agent.transport")
 local state = { buf = nil, timer = nil }
 local INTERVAL = 700
 
+M.keys = {
+  {
+    section = "Agent live view",
+    keys = {
+      { "q", "close the split" },
+      { "i", "focus the agent pane" },
+    },
+  },
+}
+
 local function paint(buf)
   vim.api.nvim_buf_call(buf, function()
     vim.cmd([[
