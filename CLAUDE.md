@@ -121,7 +121,7 @@ All git work is async through `git/repo.lua` (run, root, porcelain-v2 status, `s
 - Branch segment `main*+ ↑1↓2`: `*` unstaged, `+` staged, ↑↓ vs upstream, short sha when detached.
 - Every git read runs under `repo.run`'s 3 s cap with a feature name (`status`, `diff`, `stage`, `merge`, …); a cut-off pauses that feature for the repo for 10 min with one notice.
 - Limits: no merge editor for nested (recursive-merge, longer) markers; side panes sync to a conflict by matching its text, so an all-empty side lands just past the line before it.
-- **3 s rule:** every git read goes through `repo.run` (killed at 3 s, feature paused 10 min, one `○ git <feature> paused` notice); no `run_sync`, and `repo.root` is a filesystem walk (`.git` dir/file, `GIT_DIR`/`GIT_WORK_TREE`, core.worktree; same answer as `rev-parse --show-toplevel`). Writes (apply/commit/add/switch) are never killed (index.lock) but say `◆ git <op> still running…` past 3 s; push/pull/fetch cap at 60 s. Diff pane: past 128 KiB it drops histogram/linematch (Myers), past 512 KiB no filetype, past 3 MiB it shows `○ <path> · too large to diff here` and `⏎` opens `git diff` as text. The gutter uses Myers past 128 KiB and turns off past 512 KiB (`b:git_gutter_off`).
+- **3 s rule:** every git read goes through `repo.run` (killed at 3 s, feature paused 10 min, one `○ git <feature> paused` notice); no `run_sync`, and `repo.root` is a filesystem walk (`.git` dir/file, `GIT_DIR`/`GIT_WORK_TREE`, core.worktree/bare, HEAD validated, stops at a mount; same answer as `rev-parse --show-toplevel`). Writes (apply/commit/add/switch) are never killed (index.lock) but say `◆ git <op> still running…` past 3 s; push/pull/fetch cap at 60 s. Diff pane: past 128 KiB it drops histogram/linematch (Myers), past 512 KiB no filetype, past 40M hunks × lines inline only (side by side is ~3 ms per million), past 3 MiB it shows `○ <path> · too large to diff here` and `⏎` opens `git diff` as text (a refresh keeps its cursor, and skips it when unchanged). The gutter uses Myers past 128 KiB and turns off past 512 KiB (`b:git_gutter_off`).
 
 ## AI completion (lua/core/complete.lua)
 
@@ -148,7 +148,7 @@ Ghost text tagged with its source (`● local` green, `● copilot` dim, `● co
 - Format-on-save is **off** (conform never had it on). `:Format toggle` turns it on.
 - `autoread` + `config/autocmds.lua` checks the current file every second and on focus. While an agent is attached, every visible buffer is checked every 2 s.
 - Big files (≥ 1.5 MiB) are decided on every read: no treesitter, LSP, swap or undo. Treesitter highlighting also stops above 512 KiB.
-- Anything that would block the UI over ~3 s is cut or async (git above; `<leader>aC` is async rg, 3 s, `--max-filesize 1M`, scans the repo root, never `$HOME` or `/`).
+- Anything that would block the UI over ~3 s is cut or async (git above; `<leader>aC` is async rg, 3 s, `--max-filesize 1M`, scans the repo root, never `$HOME` or an ancestor of it).
 - LSP is refused above 512 KiB before any server starts (`core/lsp.lua` wraps `vim.lsp.start`, since servers receive the whole file on didOpen); a one-time `○ LSP off · big file` notice. `:let b:lsp_force = 1 | e` overrides.
 
 ## Gotchas

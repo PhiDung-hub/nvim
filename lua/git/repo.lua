@@ -78,38 +78,64 @@ function M.run(args, cwd, cb, opts)
   end)
 end
 
--- Git's is_git_directory(): HEAD plus objects, or a commondir holding them (linked worktrees).
-local function is_gitdir(dir)
-  return vim.uv.fs_stat(dir .. "/HEAD") ~= nil and (vim.uv.fs_stat(dir .. "/objects") or vim.uv.fs_stat(dir .. "/commondir")) ~= nil
-end
-
--- A `.git` file (worktree, submodule) must point at a git directory, or git refuses the repo.
-local function valid_gitfile(file, dir)
+local function first_line(file)
   local f = io.open(file)
-  local target = f and (f:read("*l") or ""):match("^gitdir: (.+)$")
+  local line = f and f:read("*l") or ""
   if f then f:close() end
-  if not target then return false end
-  return is_gitdir(target:sub(1, 1) == "/" and target or dir .. "/" .. target)
+  return line
 end
 
--- core.worktree of a git directory (set in submodule gitdirs under .git/modules), resolved against it.
-local function core_worktree(gitdir)
+local function abs(p, base) return p:sub(1, 1) == "/" and p or base .. "/" .. p end
+
+-- Git's is_git_directory(): objects (or a commondir holding them, linked worktrees) and a valid HEAD.
+local function is_gitdir(dir)
+  if not (vim.uv.fs_stat(dir .. "/objects") or vim.uv.fs_stat(dir .. "/commondir")) then return false end
+  local head = first_line(dir .. "/HEAD")
+  return head:match("^ref: refs/") ~= nil or (head:match("^%x+$") ~= nil and (#head == 40 or #head == 64))
+end
+
+-- The work tree a git directory yields: nil when its config says bare, its core.worktree (submodule gitdirs
+-- under .git/modules, or set by hand) resolved against it, else `default`.
+local function worktree(gitdir, default)
   local f = io.open(gitdir .. "/config")
-  local tree = f and f:read("*a"):match("\n%s*worktree%s*=%s*([^\n]-)%s*\n")
+  local cfg = f and "\n" .. f:read("*a") or ""
   if f then f:close() end
-  return tree and vim.uv.fs_realpath(tree:sub(1, 1) == "/" and tree or gitdir .. "/" .. tree)
+  if cfg:match("\n%s*bare%s*=%s*true") then return nil end
+  local tree = cfg:match("\n%s*worktree%s*=%s*([^\n]-)%s*\n")
+  if tree then return vim.uv.fs_realpath(abs(tree, gitdir)) end
+  return default
 end
 
--- Git's discovery walk, without a process: the first directory with a valid `.git` is the top; reaching a git
--- directory itself (bare repo, inside .git) has no work tree unless its config names one.
+-- The git directory at `path`: itself, or the one a `.git` file (worktree, submodule) points at; nil if invalid.
+local function gitdir_at(path, stat)
+  if stat.type == "file" then
+    local target = first_line(path):match("^gitdir: (.+)$")
+    path = target and abs(target, vim.fs.dirname(path))
+  end
+  return path and is_gitdir(path) and path or nil
+end
+
+-- What git finds in `dir`: a work tree (or nil, where git stops without one), or false to keep walking up.
+-- A `.git` file that points nowhere valid stops git; a `.git` directory that is not a repo is skipped.
+local function candidate(dir)
+  local stat = vim.uv.fs_stat(dir .. "/.git")
+  local gitdir = stat and gitdir_at(dir .. "/.git", stat)
+  if gitdir then return worktree(gitdir, dir) end
+  if stat and stat.type == "file" then return nil end
+  if is_gitdir(dir) then return worktree(dir, nil) end
+  return false
+end
+
+-- Git's discovery walk, without a process; like git it stops at a filesystem boundary.
 local function discover(dir)
+  local dev = vim.uv.fs_stat(dir).dev
+  local across = (vim.env.GIT_DISCOVERY_ACROSS_FILESYSTEM or ""):match("^[1tTyY]")
   while dir do
-    local stat = vim.uv.fs_stat(dir .. "/.git")
-    if stat and stat.type == "directory" and is_gitdir(dir .. "/.git") then return dir end
-    if stat and stat.type == "file" then return valid_gitfile(dir .. "/.git", dir) and dir or nil end
-    if is_gitdir(dir) then return core_worktree(dir) end
+    local top = candidate(dir)
+    if top ~= false then return top end
     local parent = vim.fs.dirname(dir)
-    dir = parent ~= dir and parent or nil
+    local pstat = parent ~= dir and vim.uv.fs_stat(parent)
+    dir = pstat and (across or pstat.dev == dev) and parent or nil
   end
 end
 
@@ -119,8 +145,13 @@ function M.root(path)
   path = path and path ~= "" and vim.fs.normalize(path) or vim.fn.getcwd()
   local dir = vim.uv.fs_realpath(vim.fn.isdirectory(path) == 1 and path or vim.fs.dirname(path))
   if not dir then return nil end
-  local tree = vim.env.GIT_WORK_TREE and vim.uv.fs_realpath(vim.env.GIT_WORK_TREE)
-  if vim.env.GIT_DIR then return tree or dir end
+  local tree = vim.env.GIT_WORK_TREE and vim.uv.fs_realpath(abs(vim.env.GIT_WORK_TREE, dir))
+  if vim.env.GIT_DIR then
+    local path = abs(vim.env.GIT_DIR, dir)
+    local stat = vim.uv.fs_stat(path)
+    local gitdir = stat and gitdir_at(path, stat)
+    return gitdir and (tree or worktree(gitdir, dir)) or nil
+  end
   local top = discover(dir)
   return top and tree or top
 end

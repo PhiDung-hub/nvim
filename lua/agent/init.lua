@@ -194,9 +194,9 @@ local function buffer_items()
   return out
 end
 
-local function wide(dir) return dir == vim.env.HOME or dir == "/" end
+local function wide(dir) return dir == "/" or vim.startswith(vim.env.HOME .. "/", dir .. "/") end
 
--- The tree <leader>aC scans: the cwd's repo, else the cwd; never $HOME or / wholesale (then the buffer's repo, `narrowed`).
+-- The tree <leader>aC scans: the cwd's repo, else the cwd; never $HOME or an ancestor of it wholesale (then the buffer's repo, `narrowed`).
 local function scan_root()
   local cwd = vim.fn.getcwd()
   local root = repo.root(cwd)
