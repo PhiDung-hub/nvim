@@ -55,6 +55,17 @@ local CMD_TEXT = {
   AgentAsk = "/btw about the range",
   AgentTask = "task on the range",
   Complete = "AI source: auto · copilot · codex · off",
+  LspInfo = "LSP clients and config health",
+  LspRestart = "restart LSP clients on this buffer",
+  Mason = "installer",
+  MasonInstall = "install a tool",
+  MasonUpdate = "update the registry",
+  Neotree = "file tree",
+  FFFFind = "find files (path or query)",
+  FFFResume = "resume the last file search",
+  FFFScan = "rescan files",
+  FFFHealth = "fff health",
+  Man = "read a man page",
 }
 
 local VIM = {
@@ -257,7 +268,7 @@ local function commands(buf)
   local rows = {}
   local all = vim.tbl_extend("force", vim.api.nvim_get_commands({}), vim.api.nvim_buf_get_commands(buf, {}))
   for name, c in pairs(all) do
-    local text = c.definition ~= "" and c.definition or CMD_TEXT[name]
+    local text = CMD_TEXT[name] or (c.definition ~= "" and c.definition)
     local noise = not text or text:find("^%l+<bang> <args>$") or text:find("^call ")
     if not noise then rows[#rows + 1] = { key = ":" .. name, cmd = name, nargs = c.nargs, action = text, mode = ":", where = "command", run = true } end
   end
@@ -308,6 +319,11 @@ local function section_rows(sec, where)
   return rows
 end
 
+local function literal(row)
+  if not row.mode:find("n") or row.action:find("here") then return false end
+  return not row.key:find("[{/ ]") and not row.key:find("^[:?]")
+end
+
 local function build(buf)
   local tabs, by = {}, {}
   for i, name in ipairs(TABS) do
@@ -324,7 +340,10 @@ local function build(buf)
     table.insert(t.by[section].rows, row)
   end
   for _, sec in ipairs(VIM) do
-    for _, row in ipairs(section_rows(sec, "built-in")) do add("Vim", sec.section, row) end
+    for _, row in ipairs(section_rows(sec, "built-in")) do
+      row.lhs, row.run = row.key, literal(row)
+      add("Vim", sec.section, row)
+    end
   end
   for _, row in ipairs(live_maps(buf)) do
     local tab, section = classify(row, row.map)
@@ -353,6 +372,23 @@ local function fit(s, w)
   return s .. (" "):rep(math.max(0, w - width(s)))
 end
 
+local function fixed_width(w)
+  local n = 2 + w.key + width(SEP)
+  if w.mode then n = n + w.mode + width(SEP) end
+  if w.where then n = n + w.where + width(SEP) end
+  return n
+end
+
+-- Too narrow for the table: shrink Where and Key, then drop Where, then Mode, so Action keeps 10 cells.
+local function narrow(w)
+  local need = function() return fixed_width(w) + 10 - w.total end
+  w.where = math.min(w.where, math.max(6, w.where - need()))
+  w.key = math.min(w.key, math.max(8, w.key - need()))
+  if need() > 0 then w.where = nil end
+  if need() > 0 then w.mode = nil end
+  w.key = math.min(w.key, math.max(3, w.key - need()))
+end
+
 local function columns(tabs)
   local w = { key = 3, action = 6, mode = 4, where = 5 }
   for _, t in ipairs(tabs) do
@@ -364,9 +400,9 @@ local function columns(tabs)
     end
   end
   w.key, w.where, w.action = math.min(w.key, 18), math.min(w.where, 18), math.min(w.action, 64)
-  local fixed = 2 + w.key + w.mode + w.where + 3 * #SEP
-  w.total = math.min(vim.o.columns - 4, math.max(80, fixed + w.action))
-  w.action = math.max(10, w.total - fixed)
+  w.total = math.min(vim.o.columns - 4, math.max(80, fixed_width(w) + w.action))
+  narrow(w)
+  w.action = math.max(1, w.total - fixed_width(w))
   return w
 end
 
@@ -386,13 +422,19 @@ end
 
 local WHERE_HL = { global = "AosFaint", buffer = "AosId", command = "AosFaint", ["built-in"] = "AosFaint" }
 
+local function cells(w, c, hl)
+  local out = { { fit(c[1], w.key), hl[1] }, { fit(c[2], w.action), hl[2] } }
+  if w.mode then out[#out + 1] = { fit(c[3], w.mode), hl[3] } end
+  if w.where then out[#out + 1] = { clip(c[4], w.where), hl[4] } end
+  return out
+end
+
 local function emit_section(out, title, rows, w)
   out.lines[#out.lines + 1] = ""
-  out.lines[#out.lines + 1] = "▾ " .. title
+  out.lines[#out.lines + 1] = "▾ " .. clip(title, w.total - 2)
   out.marks[#out.lines] = { { 0, #"▾", "AosDim" }, { #"▾ ", #out.lines[#out.lines], "Title" } }
   for _, r in ipairs(rows) do
-    local where = { clip(r.where, w.where), WHERE_HL[r.where] or "AosDim" }
-    compose(out, { { fit(r.key, w.key), "AosArg" }, { fit(r.action, w.action) }, { fit(r.mode, w.mode), "AosDim" }, where }, r)
+    compose(out, cells(w, { r.key, r.action, r.mode, r.where }, { "AosArg", nil, "AosDim", WHERE_HL[r.where] or "AosDim" }), r)
   end
 end
 
@@ -417,20 +459,35 @@ end
 
 local function lines_for(sections, w)
   local out = { lines = {}, marks = {}, rows = {} }
-  local head = { fit("Key", w.key), fit("Action", w.action), fit("Mode", w.mode), "Where" }
-  compose(out, vim.tbl_map(function(h) return { h, "AosDim" } end, head))
+  compose(out, cells(w, { "Key", "Action", "Mode", "Where" }, { "AosDim", "AosDim", "AosDim", "AosDim" }))
   for _, sec in ipairs(sections) do emit_section(out, sec.name, sec.rows, w) end
   if #sections == 0 then out.lines[#out.lines + 1] = "  ○ · no match" end
   return out
 end
 
+local function tab_cell(i)
+  local active = not S.query and i == S.tab
+  local text = (" %s %d:%s "):format(active and "●" or "○", i, TABS[i])
+  return { ("%%%d@v:lua.AosKeysTab@%%#%s#%s%%X"):format(i, active and "TabLineSel" or "TabLine", text), width(text) + 1 }
+end
+
+-- As many tabs around the current one as fit, with < > where some are hidden.
 local function tab_bar()
-  local parts = {}
-  for i, name in ipairs(TABS) do
-    local active = not S.query and i == S.tab
-    parts[#parts + 1] = ("%%%d@v:lua.AosKeysTab@%%#%s# %s %d:%s %%X"):format(i, active and "TabLineSel" or "TabLine", active and "●" or "○", i, name)
+  local cells = vim.tbl_map(tab_cell, vim.fn.range(1, #TABS))
+  local lo, hi, used = S.tab, S.tab, cells[S.tab][2]
+  local function take(i)
+    if not cells[i] or used + cells[i][2] > S.w.total - 2 then return false end
+    used = used + cells[i][2]
+    return true
   end
-  return table.concat(parts, "%#NormalFloat# ")
+  repeat
+    local right, left = take(hi + 1), take(lo - 1)
+    hi, lo = right and hi + 1 or hi, left and lo - 1 or lo
+  until not (right or left)
+  local parts = {}
+  for i = lo, hi do parts[#parts + 1] = cells[i][1] end
+  local bar = table.concat(parts, "%#NormalFloat# ")
+  return (lo > 1 and "%#AosFaint#<" or "") .. bar .. (hi < #TABS and "%#AosFaint# >" or "")
 end
 
 local function footer()
@@ -494,14 +551,20 @@ local function filter()
   if is_open() then render() end
 end
 
+local function refusal(row)
+  if not row.map and row.where ~= "built-in" then return "works inside " .. row.where end
+  if not row.mode:find("n") then return row.mode .. " mode only" end
+  return "built-in, type it in the buffer"
+end
+
 local function run()
   local row = S.rows[vim.fn.line(".")]
   if not row then return end
-  if not row.run then return vim.notify(("○ %s · works inside %s"):format(row.key, row.where)) end
+  if not row.run then return vim.notify(("○ %s · %s"):format(row.key, refusal(row))) end
   local origin = S.origin
   M.close()
   if vim.api.nvim_win_is_valid(origin) then vim.api.nvim_set_current_win(origin) end
-  if not row.cmd then return vim.api.nvim_feedkeys(vim.keycode(row.lhs), "m", false) end
+  if not row.cmd then return vim.api.nvim_feedkeys(vim.keycode(row.lhs), row.map and "m" or "n", false) end
   if row.nargs == "0" then return vim.cmd(row.cmd) end
   vim.api.nvim_feedkeys(":" .. row.cmd .. " ", "n", false)
 end
