@@ -17,7 +17,15 @@ local SECTIONS = {
   { key = "changes", title = "Changes", always = true },
 }
 local LETTER_HL = { M = "AosRunning", T = "AosRunning", A = "AosDone", U = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", ["!"] = "AosFailed" }
-local HINT = " ⏎ diff · s/u stage · x discard · c commit · ⇥ fold · g? help "
+local HINTS = { " ⏎ diff · s/u stage · x discard · c commit · ⇥ fold · g? help ", " s/u stage · c commit · g? help ", " g? help " }
+
+-- The longest key hint that fits the list's bottom border.
+local function hint(width)
+  for _, h in ipairs(HINTS) do
+    if vim.fn.strdisplaywidth(h) + 2 <= width then return { { h, "AosFaint" } } end
+  end
+  return ""
+end
 local FLOAT_KEYS = { { "q", "close" }, { "<Esc>", "close" } }
 
 local function notify(msg, level) vim.notify(msg, level or vim.log.levels.INFO, { title = "git" }) end
@@ -784,7 +792,7 @@ function M.open(opts)
   local list, rect = rects()
   S.win = vim.api.nvim_open_win(S.buf, true, vim.tbl_extend("force", list, {
     title = { { " ❯ ", "AosPrompt" }, { "git status ", "AosArg" } }, title_pos = "left",
-    footer = { { HINT, "AosFaint" } }, footer_pos = "right",
+    footer = hint(list.width), footer_pos = "right",
   }))
   win_opts(S.win)
   diff.attach(rect, { close = M.close, focus = focus, refresh = refresh })
@@ -881,7 +889,7 @@ function M.setup()
     callback = function()
       if not visible() then return end
       local list, rect = rects()
-      vim.api.nvim_win_set_config(S.win, list)
+      vim.api.nvim_win_set_config(S.win, vim.tbl_extend("force", list, { footer = hint(list.width), footer_pos = "right" }))
       diff.resize(rect)
       render()
     end,
