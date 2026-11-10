@@ -1,2 +1,2 @@
--- `require("nvim-web-devicons")` from neo-tree, fff and render-markdown resolves to the local icons.
+-- `require("nvim-web-devicons")` from neo-tree and fff resolves to the local icons.
 return require("ui.icons")

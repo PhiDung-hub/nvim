@@ -1,5 +1,5 @@
 -- File glyphs by name, extension or filetype in Agent OS colours (replaces nvim-web-devicons).
--- Speaks the devicons API that neo-tree, fff and render-markdown call; lua/nvim-web-devicons.lua forwards here.
+-- Speaks the devicons API that neo-tree and fff call; lua/nvim-web-devicons.lua forwards here.
 -- Glyphs stay as \u{} escapes: literal Nerd Font characters have been lost to empty strings in this repo before.
 local M = {}
 
