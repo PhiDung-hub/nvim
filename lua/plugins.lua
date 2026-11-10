@@ -13,6 +13,8 @@ return {
       keymap = {
         preset = "none",
         ["<Right>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_and_accept() end end, "fallback" },
+        ["<Tab>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_and_accept() end end, "snippet_forward", "fallback" },
+        ["<S-Tab>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_prev() end end, "snippet_backward", "fallback" },
         ["<Down>"] = { "select_next", "fallback" },
         ["<Up>"] = { "select_prev", "fallback" },
         ["<C-n>"] = { "select_next", "fallback" },

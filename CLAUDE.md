@@ -125,7 +125,7 @@ Ghost text tagged with its source (`● local` green, `● copilot` dim, `● co
 - **Copilot (fallback):** `copilot-language-server` (Mason) answers `textDocument/inlineCompletion` when the local server is missing, loading or failing. Sign in once with `:LspCopilotSignIn`.
 - **Codex (on demand):** `<M-]>` starts one `codex app-server` (ChatGPT login) and runs a fresh ephemeral read-only turn (`gpt-6-luna`, effort low, no tools): 2.5–7 s. An error pauses it for 5 min. Override the model with `vim.g.complete_codex_model`.
 - `:Complete auto|copilot|codex|off`: `auto` = local then Copilot; `copilot`/`codex` use only that source as you type.
-- Insert keys: `<Tab>` accept (literal Tab when nothing is shown), `<M-]>` ask Codex now, `<C-]>` dismiss. Normal-mode `<Tab>` still cycles buffers.
+- Insert keys: `<Tab>` accepts the completion menu's item (first if none selected) when the menu is open, else jumps to the next snippet field, else accepts ghost text, else inserts a tab; `<S-Tab>` selects the previous menu item, else the previous snippet field, else unindents. `<M-]>` ask Codex now, `<C-]>` dismiss. Normal-mode `<Tab>` still cycles buffers.
 
 ## Keys (lua/config/keymaps.lua)
 
