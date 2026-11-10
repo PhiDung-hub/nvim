@@ -184,6 +184,8 @@ local hl = {
   GitAdd = { fg = t.green },
   GitChange = { fg = t.yellow },
   GitDelete = { fg = t.red },
+  -- git.scm
+  AosScmDeleted = { fg = t.red, strikethrough = true },
 
   NeoTreeNormal = { fg = t.text },
   NeoTreeNormalNC = { fg = t.text },
