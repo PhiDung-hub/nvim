@@ -191,6 +191,8 @@ local hl = {
   GitBlameAge2 = { fg = blend(t.magenta, 0.62) },
   GitBlameAge3 = { fg = blend(t.magenta, 0.46) },
   GitBlameAge4 = { fg = blend(t.magenta, 0.32) },
+  -- git.scm
+  AosScmDeleted = { fg = t.red, strikethrough = true },
 
   NeoTreeNormal = { fg = t.text },
   NeoTreeNormalNC = { fg = t.text },
