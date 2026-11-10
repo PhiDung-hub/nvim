@@ -673,7 +673,8 @@ function M.command(arg)
   if file == "" then return pick(root) end
   local rel, row = repo.relative(root, file), api.nvim_win_get_cursor(0)[1]
   local marked = state[api.nvim_get_current_buf()] ~= nil
-  repo.run({ "--literal-pathspecs", "ls-files", "-u", "--", rel }, root, function(ok, out)
+  repo.run({ "--literal-pathspecs", "ls-files", "-u", "--", rel }, root, function(ok, out, _, timed_out)
+    if timed_out then return paused({}) end
     if ok and out ~= "" then return M.open({ root = root, path = rel, row = row }) end
     if marked then return notify("○ " .. rel .. " is not conflicted in git · co/ct/cb/c0 resolve its markers here") end
     pick(root)

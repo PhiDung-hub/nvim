@@ -9,6 +9,9 @@ local bufs = {} -- buf -> { buf, root, rel, index = text | nil, hunks }
 local dirs, waiting = {}, {} -- dir -> { root, gitdir } | false
 local stats, watchers = {}, {}
 local indices = { result_type = "indices", algorithm = "histogram" }
+local fast = { result_type = "indices" }
+-- Same cap as LSP and treesitter: past it every edit's re-diff costs over 50 ms (1.4 MiB: ~210 ms).
+local MAX_BYTES = 512 * 1024
 
 local function say(msg, hl) api.nvim_echo({ { msg, hl or "AosDim" } }, false, {}) end
 
@@ -52,7 +55,11 @@ local function with_eol(hunks, old, new)
   return hunks
 end
 
-local function diff(old, new) return with_eol(vim.text.diff(join(old), join(new), indices) --[[@as integer[][] ]], old, new) end
+-- Histogram costs ~10x Myers on big files (500 KiB: 23 ms vs 2 ms), so past 128 KiB the gutter uses Myers.
+local function diff(old, new)
+  local a, b = join(old), join(new)
+  return with_eol(vim.text.diff(a, b, #b > 128 * 1024 and fast or indices) --[[@as integer[][] ]], old, new)
+end
 
 local function slice(lines, start, count) return count > 0 and vim.list_slice(lines, start, start + count - 1) or {} end
 
@@ -160,7 +167,7 @@ end
 local function update(buf)
   local st = bufs[buf]
   if not st or not api.nvim_buf_is_valid(buf) then return end
-  st.hunks = st.index and diff(st.index, buf_text(buf)) or {}
+  st.hunks = st.index and not vim.b[buf].git_gutter_off and diff(st.index, buf_text(buf)) or {}
   place(buf, st.hunks, st.conflict)
 end
 
@@ -242,6 +249,8 @@ end
 function M.reload(buf, cb)
   local path = api.nvim_buf_get_name(buf)
   if path == "" or vim.bo[buf].buftype ~= "" or vim.b[buf].bigfile then return end
+  local stat = vim.uv.fs_stat(path)
+  vim.b[buf].git_gutter_off = stat and stat.size > MAX_BYTES or nil
   local dir = vim.uv.fs_realpath(vim.fs.dirname(path))
   if not dir then return end
   locate(dir, function(loc)
@@ -319,7 +328,7 @@ end
 function M.nav(dir)
   local st = current()
   if not st then return end
-  if #st.hunks == 0 then return say("○ no hunks") end
+  if #st.hunks == 0 then return say(vim.b.git_gutter_off and "○ gutter off · big file" or "○ no hunks") end
   local lnum, n, target = vim.fn.line("."), #st.hunks, nil
   for i = dir > 0 and 1 or n, dir > 0 and n or 1, dir do
     local start = span(st.hunks[i])

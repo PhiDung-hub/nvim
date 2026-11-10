@@ -5,6 +5,13 @@ local repo = require("git.repo")
 local M = {}
 local ns = vim.api.nvim_create_namespace("git.diff")
 local DIFFOPT = "internal,filler,closeoff,indent-heuristic,inline:char,linematch:60,algorithm:histogram"
+-- Histogram and linematch grow much faster than Myers (1.4 MiB: 320 ms vs 6 ms), so past MID they are dropped;
+-- past BIG even nvim's own diff mode costs over 300 ms, so the pane offers `git diff` as text. Past HL no filetype.
+-- Side by side costs ~3 ms per million hunks × lines (1 MiB with every 2nd line changed: 280 ms), so past DENSE it
+-- is inline only, which stays near 150 ms even at 3 MiB with 20k hunks.
+local FAST_DIFFOPT = "internal,filler,closeoff,indent-heuristic,inline:char"
+local MID, BIG, HL, DENSE = 128 * 1024, 3 * 1024 * 1024, 512 * 1024, 40e6
+local BIG_HUNKS = "○ too large for hunks here · s/u in the list stage the whole file"
 local SIDE_BY_SIDE = 120
 local CONTEXT = 3
 local D = { wins = {}, scratch = {}, mapped = {}, gen = 0 }
@@ -28,7 +35,13 @@ local function new_buf() return D.t and (D.t.real or D.scratch.new) end
 local function new_text() return D.t.real and buf_text(D.t.real) or D.t.new or "" end
 
 local function hunks(old, new)
+  if math.max(#old, #new) > MID then return vim.text.diff(old, new, { result_type = "indices" }) end
   return vim.text.diff(old, new, { result_type = "indices", algorithm = "histogram", linematch = 60 })
+end
+
+local function dense(old, new)
+  local _, lines = new:gsub("\n", "")
+  return #hunks(old, new) * lines > DENSE
 end
 
 -- The hunk whose new side covers `lnum`; a pure deletion matches the lines on either side of it.
@@ -83,9 +96,9 @@ local function set_text(buf, text)
   vim.bo[buf].modifiable, vim.bo[buf].modified = false, false
 end
 
-local function fill(buf, text, path)
+local function fill(buf, text, path, ft)
   set_text(buf, text)
-  local ft = path ~= "" and vim.filetype.match({ filename = path, buf = buf }) or ""
+  ft = ft or #text <= HL and path ~= "" and vim.filetype.match({ filename = path, buf = buf }) or ""
   if vim.bo[buf].filetype ~= ft then vim.bo[buf].filetype = ft end
   return buf
 end
@@ -149,6 +162,7 @@ end
 local function win_opts(w)
   local wo = vim.wo[w]
   wo.number, wo.relativenumber, wo.signcolumn, wo.foldcolumn, wo.foldenable = true, false, "no", "0", false
+  if wo.foldmethod == "expr" then wo.foldmethod = "manual" end
   wo.wrap, wo.list, wo.spell, wo.winbar, wo.statuscolumn, wo.cursorline = false, false, false, "", "", true
 end
 
@@ -162,11 +176,11 @@ end
 -- A rename titles the left (old) side with the old path and the right with the new one.
 local function titles(t, single)
   local renamed = not t.message and t.old_path and t.old_path ~= t.path
-  local path = t.message and "" or (single and renamed and t.old_path .. " → " or "") .. t.path .. " "
+  local path = t.message and not t.verb and "" or (single and renamed and t.old_path .. " → " or "") .. t.path .. " "
   if renamed and not single then path = t.old_path .. " " end
-  local head = { { " ❯ ", "AosPrompt" }, { t.plain and not t.message and "merge " or "diff ", "AosArg" }, { path, "FloatTitle" } }
+  local head = { { " ❯ ", "AosPrompt" }, { t.verb or t.plain and not t.message and "merge " or "diff ", "AosArg" }, { path, "FloatTitle" } }
   local footer = t.staged and " u unstage hunk · ]c [c · ⇥ list · q close " or " s stage hunk · x revert hunk · ]c [c · ⇥ list · q close "
-  if t.plain then footer = t.message and " ⇥ list · q close " or " co ct cb accept · ]x [x conflict · ⇥ list · q close " end
+  if t.plain then footer = t.footer or t.message and " ⇥ list · q close " or " co ct cb accept · ]x [x conflict · ⇥ list · q close " end
   local new = D.wins.new
   if single then
     if not t.plain then vim.list_extend(head, { { t.old_label .. " ", "AosSha" }, { "↔ ", "AosFaint" }, { t.new_label .. " ", "AosDone" } }) end
@@ -177,15 +191,23 @@ local function titles(t, single)
   vim.api.nvim_win_set_config(new, { title = right, title_pos = "left", footer = { { footer, "AosFaint" } }, footer_pos = "right" })
 end
 
+-- Off before refilling: set_lines on a buffer in diff mode re-diffs it, and each diff of a big file is costly.
+local function diff_off()
+  for _, w in pairs(D.wins) do
+    if vim.api.nvim_win_is_valid(w) and vim.wo[w].diff then vim.api.nvim_win_call(w, function() vim.cmd.diffoff() end) end
+  end
+end
+
+-- :diffthis on the second window computes the diff once.
 local function diff_mode(single)
+  if not single then vim.o.diffopt = (D.t.size or 0) > MID and FAST_DIFFOPT or DIFFOPT end
   for _, which in ipairs({ "old", "new" }) do
     local w = D.wins[which]
     if w then
-      vim.api.nvim_win_call(w, function() vim.cmd(single and "diffoff" or "diffthis") end)
+      if not single then vim.api.nvim_win_call(w, function() vim.cmd.diffthis() end) end
       win_opts(w)
     end
   end
-  if not single then vim.cmd.diffupdate() end
   inline_marks()
 end
 
@@ -233,6 +255,7 @@ end
 local function stage_hunk()
   local t = D.t
   if D.applying then return end
+  if t.big then return notify(BIG_HUNKS) end
   if t.staged then return notify("○ staged diff: u unstages a hunk") end
   if t.plain then return notify("○ merge conflict: ⏎ in the list opens the merge editor") end
   if not t.real or t.entry.letter == "U" then return stage_file(t) end
@@ -248,6 +271,7 @@ end
 local function unstage_hunk()
   local t = D.t
   if D.applying then return end
+  if t.big then return notify(BIG_HUNKS) end
   if not t.staged then return notify("○ only a staged diff unstages hunks") end
   local lnum = cursor()
   D.applying = true
@@ -298,6 +322,7 @@ end
 
 local function jump(dir)
   if vim.wo.diff then return pcall(vim.cmd, "normal! " .. (dir > 0 and "]c" or "[c")) end
+  if D.t.plain then return end
   local lnum, starts = vim.api.nvim_win_get_cursor(0)[1], {}
   for _, h in ipairs(hunks(D.t.old or "", new_text())) do starts[#starts + 1] = math.max(h[3], 1) end
   if dir < 0 then starts = vim.fn.reverse(starts) end
@@ -307,11 +332,18 @@ local function jump(dir)
 end
 
 local function toggle()
+  if D.t and D.t.dense then return notify("○ too many changes for side by side here · inline only") end
   D.force = not (D.t and D.t.inline)
   M.resize(D.rect)
 end
 
+local show_patch
+
 local KEYS = {
+  { "<CR>", function()
+    if D.t and D.t.big then return show_patch() end
+    vim.cmd("normal! " .. vim.v.count1 .. "+")
+  end, "git diff as text (file too large to diff here)" },
   { "q", function() D.opts.close() end, "close" },
   { "<Esc>", function() D.opts.close() end, "close" },
   { "<Tab>", function() D.opts.focus(0) end, "focus the file list" },
@@ -379,10 +411,12 @@ local function render(t, focus, keep)
   local prev = D.t
   D.t = t
   if t.entry and t.new == nil then t.real = real_buf(t) end
-  t.inline = t.plain or (D.force == nil and D.rect.width < SIDE_BY_SIDE) or D.force == true
+  diff_off()
+  if t.dense == nil then t.dense = not t.plain and dense(t.old, new_text()) end
+  t.inline = t.plain or t.dense or (D.force == nil and D.rect.width < SIDE_BY_SIDE) or D.force == true
   place(t.inline)
   if not t.inline then set_buf(D.wins.old, fill(scratch("old"), t.old, t.path)) end
-  set_buf(D.wins.new, t.real or fill(scratch("new"), t.new, t.path))
+  set_buf(D.wins.new, t.real or fill(scratch("new"), t.new, t.path, t.ft))
   if prev and prev.real and prev.real ~= t.real then release(prev) end
   for _, b in pairs({ D.scratch.old, D.scratch.new, t.real }) do map(b, b == t.real) end
   diff_mode(t.inline)
@@ -428,6 +462,50 @@ local function load(t, done)
   end)
 end
 
+-- Bytes of the larger side; the working file is measured on disk before it is loaded. `sig` tells a refresh
+-- whether the new side changed.
+local function too_big(t)
+  local stat = t.new == nil and vim.uv.fs_stat(t.root .. "/" .. t.path)
+  t.size = math.max(#t.old, t.new and #t.new or stat and stat.size or 0)
+  t.sig = t.new or stat and ("%d.%d:%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size)
+  return t.size > BIG
+end
+
+-- `keep`: a refresh of the patch on screen, which keeps its cursor.
+show_patch = function(t, keep)
+  t = t or D.t
+  if not (t and t.big) or t.verb then return end
+  local args = { "--literal-pathspecs", "diff", "-M", t.staged and "--cached" or nil }
+  vim.list_extend(args, t.entry.letter == "U" and { "--no-index", "--", "/dev/null", t.path } or { "--", t.path, t.old_path })
+  local gen = D.gen
+  repo.run(args, t.root, function(ok, out, err, cut)
+    if gen ~= D.gen or not D.rect then return end
+    if cut then return M.message("○ diff paused · slow repo") end
+    if out == "" then return M.message("○ " .. t.path .. " · " .. (ok and "no changes" or vim.trim(err))) end
+    if #out > BIG then out = out:sub(1, BIG) .. ("\n… cut at %d MiB"):format(BIG / 1048576) end
+    local p = vim.tbl_extend("force", t, { new = out, verb = "git diff ", ft = #out <= HL and "diff" or "", footer = " ⇥ list · q close " })
+    local w = D.wins.new
+    local pos = keep and w and vim.api.nvim_win_is_valid(w) and vim.api.nvim_win_get_cursor(w)
+    render(p, vim.api.nvim_get_current_win() == w, pos and true)
+    if pos then pcall(vim.api.nvim_win_set_cursor, D.wins.new, pos) end
+  end, { feature = "diff" })
+end
+
+-- Past BIG: a note instead of the diff; opening the row (or ⏎ on the note) shows `git diff` as text, and a refresh
+-- of that text redraws it in place, or not at all when neither side changed.
+local function show_big(t, focus, patched)
+  if patched and D.t.old == t.old and D.t.sig == t.sig then
+    if focus then vim.api.nvim_set_current_win(D.wins.new) end
+    return
+  end
+  t.plain, t.message, t.big, t.ft = true, true, true, ""
+  t.footer = " ⏎ git diff · ⇥ list · q close "
+  t.new = ("○ %s · too large to diff here (%.1f MiB)\n\n  ⏎ git diff as text"):format(t.path, t.size / 1048576)
+  if patched then return show_patch(t, true) end
+  render(t, focus, false)
+  if focus then show_patch(t) end
+end
+
 -- Public -------------------------------------------------------------------------------------
 
 -- rect: the outer rectangle (borders included) the diff pane fills. opts: { close(), focus(dir), refresh() }.
@@ -443,10 +521,17 @@ function M.show(root, e, section, opts)
   if not D.rect then return end
   local t = content(root, e, section)
   local keep = D.t and D.t.key == t.key
+  local patched = keep and D.t.verb ~= nil
   -- A reload before this one lands must load it, not the file still on screen.
   D.want = { root = root, entry = e, section = section, opts = opts, key = t.key }
   load(t, function()
     D.want = nil
+    if not t.plain and too_big(t) then return show_big(t, opts and opts.focus, patched) end
+    -- A status refresh with nothing new for this file keeps the drawn diff (a changed working file redraws itself).
+    if keep and not D.t.plain and D.t.old == t.old and D.t.new == t.new then
+      if opts and opts.focus then vim.api.nvim_set_current_win(D.wins.new) end
+      return
+    end
     local w = D.wins.new and vim.api.nvim_win_is_valid(D.wins.new) and D.wins.new
     if keep and w and vim.api.nvim_get_current_win() == w then keep = vim.api.nvim_win_get_cursor(w) end
     render(t, opts and opts.focus, keep)

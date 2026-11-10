@@ -59,36 +59,101 @@ function M.run(args, cwd, cb, opts)
     vim.schedule(function() cb(false, "", "skipped: git " .. feature .. " is paused (slow repo)", true) end)
     return skipped
   end
-  local started = vim.uv.now()
-  return vim.system(command(args, cwd), { text = not opts.binary, stdin = opts.stdin, env = env(sub), timeout = limit }, function(r)
+  local started, finished = vim.uv.now(), false
+  -- An uncapped write past BUDGET is never silent.
+  if not limit then
+    vim.defer_fn(function()
+      if not finished then vim.notify(("◆ git %s still running…"):format(sub or "")) end
+    end, BUDGET)
+  end
+  -- Network commands lead their own process group, so a cancel (kill -pid) also ends the ssh/https helper.
+  local detach = NET[sub] or nil
+  return vim.system(command(args, cwd), { text = not opts.binary, stdin = opts.stdin, env = env(sub), timeout = limit, detach = detach }, function(r)
+    finished = true
     local timed_out = limit ~= nil and r.code == 124 and vim.uv.now() - started >= limit
     vim.schedule(function()
       if timed_out then pause(key, feature, limit) end
-      cb(r.code == 0, r.stdout or "", timed_out and ("timed out after %.1f s"):format(limit / 1000) or r.stderr or "", timed_out)
+      cb(r.code == 0 and r.signal == 0, r.stdout or "", timed_out and ("timed out after %.1f s"):format(limit / 1000) or r.stderr or "", timed_out)
     end)
   end)
 end
 
--- Blocking read for the few call sites that need an answer now; never waits longer than BUDGET.
-function M.run_sync(args, cwd)
-  local sub = subcommand(args)
-  local r = vim.system(command(args, cwd), { text = true, env = env(sub), timeout = BUDGET }):wait()
-  return r.code == 0, r.stdout or "", r.stderr or ""
+local function first_line(file)
+  local f = io.open(file)
+  local line = f and f:read("*l") or ""
+  if f then f:close() end
+  return line
 end
 
-local roots, misses = {}, {}
+local function abs(p, base) return p:sub(1, 1) == "/" and p or base .. "/" .. p end
 
--- Worktree root containing `path` (a file or directory; default cwd), or nil outside git.
+-- Git's is_git_directory(): objects (or a commondir holding them, linked worktrees) and a valid HEAD.
+local function is_gitdir(dir)
+  if not (vim.uv.fs_stat(dir .. "/objects") or vim.uv.fs_stat(dir .. "/commondir")) then return false end
+  local head = first_line(dir .. "/HEAD")
+  return head:match("^ref: refs/") ~= nil or (head:match("^%x+$") ~= nil and (#head == 40 or #head == 64))
+end
+
+-- The work tree a git directory yields: nil when its config says bare, its core.worktree (submodule gitdirs
+-- under .git/modules, or set by hand) resolved against it, else `default`.
+local function worktree(gitdir, default)
+  local f = io.open(gitdir .. "/config")
+  local cfg = f and "\n" .. f:read("*a") or ""
+  if f then f:close() end
+  if cfg:match("\n%s*bare%s*=%s*true") then return nil end
+  local tree = cfg:match("\n%s*worktree%s*=%s*([^\n]-)%s*\n")
+  if tree then return vim.uv.fs_realpath(abs(tree, gitdir)) end
+  return default
+end
+
+-- The git directory at `path`: itself, or the one a `.git` file (worktree, submodule) points at; nil if invalid.
+local function gitdir_at(path, stat)
+  if stat.type == "file" then
+    local target = first_line(path):match("^gitdir: (.+)$")
+    path = target and abs(target, vim.fs.dirname(path))
+  end
+  return path and is_gitdir(path) and path or nil
+end
+
+-- What git finds in `dir`: a work tree (or nil, where git stops without one), or false to keep walking up.
+-- A `.git` file that points nowhere valid stops git; a `.git` directory that is not a repo is skipped.
+local function candidate(dir)
+  local stat = vim.uv.fs_stat(dir .. "/.git")
+  local gitdir = stat and gitdir_at(dir .. "/.git", stat)
+  if gitdir then return worktree(gitdir, dir) end
+  if stat and stat.type == "file" then return nil end
+  if is_gitdir(dir) then return worktree(dir, nil) end
+  return false
+end
+
+-- Git's discovery walk, without a process; like git it stops at a filesystem boundary.
+local function discover(dir)
+  local dev = vim.uv.fs_stat(dir).dev
+  local across = (vim.env.GIT_DISCOVERY_ACROSS_FILESYSTEM or ""):match("^[1tTyY]")
+  while dir do
+    local top = candidate(dir)
+    if top ~= false then return top end
+    local parent = vim.fs.dirname(dir)
+    local pstat = parent ~= dir and vim.uv.fs_stat(parent)
+    dir = pstat and (across or pstat.dev == dev) and parent or nil
+  end
+end
+
+-- Worktree root containing `path` (a file or directory; default cwd), or nil outside git: what
+-- `git rev-parse --show-toplevel` prints there (symlinks resolved), from a filesystem walk.
 function M.root(path)
   path = path and path ~= "" and vim.fs.normalize(path) or vim.fn.getcwd()
-  local dir = vim.fn.isdirectory(path) == 1 and path or vim.fs.dirname(path)
-  local hit = roots[dir]
-  if hit == nil or (hit == false and vim.uv.now() - (misses[dir] or 0) > 5000) then
-    local ok, out = M.run_sync({ "rev-parse", "--show-toplevel" }, dir)
-    roots[dir] = ok and vim.trim(out) or false
-    misses[dir] = vim.uv.now()
+  local dir = vim.uv.fs_realpath(vim.fn.isdirectory(path) == 1 and path or vim.fs.dirname(path))
+  if not dir then return nil end
+  local tree = vim.env.GIT_WORK_TREE and vim.uv.fs_realpath(abs(vim.env.GIT_WORK_TREE, dir))
+  if vim.env.GIT_DIR then
+    local path = abs(vim.env.GIT_DIR, dir)
+    local stat = vim.uv.fs_stat(path)
+    local gitdir = stat and gitdir_at(path, stat)
+    return gitdir and (tree or worktree(gitdir, dir)) or nil
   end
-  return roots[dir] or nil
+  local top = discover(dir)
+  return top and tree or top
 end
 
 -- Path of `file` relative to `root`, with forward slashes.

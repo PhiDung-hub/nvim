@@ -137,13 +137,16 @@ function M.items()
   return items
 end
 
--- Seed the base from the git index, so edits made while the file was closed show up too.
-function M.seed_from_index(buf)
+-- Seed the base from the git index, so edits made while the file was closed show up too; cb() runs either way.
+function M.seed_from_index(buf, cb)
   local path = vim.api.nvim_buf_get_name(buf)
-  local r = vim.system({ "git", "-C", vim.fs.dirname(path), "show", ":./" .. vim.fs.basename(path) }, { text = true }):wait(2000)
-  if r.code ~= 0 then return end
-  base[buf] = vim.split(r.stdout:gsub("\n$", ""), "\n", { plain = true })
-  M.render(buf)
+  require("git.repo").run({ "show", ":./" .. vim.fs.basename(path) }, vim.fs.dirname(path), function(ok, out)
+    if ok and vim.api.nvim_buf_is_valid(buf) then
+      base[buf] = vim.split(out:gsub("\n$", ""), "\n", { plain = true })
+      M.render(buf)
+    end
+    if cb then cb() end
+  end, { feature = "agent review" })
 end
 
 local function on_read(ev)
