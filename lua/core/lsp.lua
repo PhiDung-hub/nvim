@@ -41,11 +41,24 @@ function M.ts_root(legacy)
   end
 end
 
+local LSP_MAX_BYTES = 512 * 1024
+
+-- Servers get the whole file on didOpen, so a big file is refused before any server starts (`:let b:lsp_force = 1 | e` overrides).
+local function too_big(buf)
+  if vim.b[buf].lsp_force then return false end
+  local size = vim.fn.getfsize(vim.api.nvim_buf_get_name(buf))
+  if not vim.b[buf].bigfile and size <= LSP_MAX_BYTES then return false end
+  if not vim.b[buf].lsp_off then
+    vim.b[buf].lsp_off = true
+    vim.notify(("○ LSP off · big file (%d KiB)"):format(size / 1024))
+  end
+  return true
+end
+
 local function on_attach(ev)
   local client = vim.lsp.get_client_by_id(ev.data.client_id)
   local buf = ev.buf
   if not client then return end
-  if vim.b[buf].bigfile then return vim.schedule(function() vim.lsp.buf_detach_client(buf, client.id) end) end
 
   require("ui.lsp").attach(buf, client)
   vim.keymap.set("n", "<leader>lh", function()
@@ -66,6 +79,12 @@ local function start()
   -- One position encoding for every server, so copilot (UTF-16) and the rest agree on a shared buffer.
   local caps = require("blink.cmp").get_lsp_capabilities({ general = { positionEncodings = { "utf-16" } } })
   vim.lsp.config("*", { root_markers = { ".git" }, capabilities = caps })
+  local lsp_start = vim.lsp.start
+  vim.lsp.start = function(config, opts)
+    local buf = opts and opts.bufnr or vim.api.nvim_get_current_buf()
+    if vim.api.nvim_buf_is_valid(buf) and too_big(buf) then return end
+    return lsp_start(config, opts)
+  end
   vim.lsp.enable(servers)
   for name, bin in pairs(extras) do
     if vim.fn.executable(bin) == 1 then vim.lsp.enable(name) end

@@ -8,7 +8,7 @@ One look with WezTerm/Agent OS. The guideline lives in `~/.config/wezterm/DESIGN
 - The chrome follows the state colours: green done/running, yellow attention/waiting, blue ids/Codex, magenta shas/times/Claude, cyan args/paths/active tab, red failed, dim for idle or unknown. Code uses Tokyo Night syntax hues.
 - Square `single` borders only (`winborder`). Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `.
 - Rows read `glyph · id · text`, using the glyphs ✓ ◆ ○ ● ✗ ! ? ❯ ⎿ ▸ ▾.
-- One top bar like the WezTerm tab bar (`laststatus=0`, `showtabline=2`): buffers on the left as ` ● 1:name ` (active, solid cyan), ` ○ 2:name ` or ` ! n:name ` (pending agent hunks). Each tab carries its file icon, the name widened with parent dirs when two tabs share it (`a/init.lua`), `+` unsaved, a lock when read-only, and `✗n`/`!n` diagnostics; the focus tab adds `line:charcol` (absolute line, column in characters). Right side: mode, the current file's icon · filetype · language servers (Copilot omitted) · non-utf-8/non-unix flags, diagnostics, AI, agent, branch, and `totalL pct%`.
+- One top bar like the WezTerm tab bar (`laststatus=0`, `showtabline=2`): buffers on the left: the focus tab is a solid cyan ` ● 1 ` chip followed by its name in bold on `surface`; others read ` ○ 2:name ` or ` ! n:name ` (pending agent hunks), cyan on `surface`. Each tab carries its file icon, the name widened with parent dirs when two tabs share it (`a/init.lua`), `+` unsaved, a lock when read-only, and `✗n`/`!n` diagnostics; the focus tab adds `line:charcol` in magenta (absolute line, column in characters). Right side: mode, the current file's icon · filetype · language servers (Copilot omitted; `lsp off` for a big file) · non-utf-8/non-unix flags, diagnostics, AI, agent, branch, and `totalL pct%`.
 - Shared highlight groups are `Aos*`: `AosSeg<Color>` for segments, `AosAgent*` for review hunks.
 
 ## Layout
@@ -129,6 +129,7 @@ Ghost text tagged with its source (`● local` green, `● copilot` dim, `● co
 - Format-on-save is **off** (conform never had it on). `:Format toggle` turns it on.
 - `autoread` + `config/autocmds.lua` checks the current file every second and on focus. While an agent is attached, every visible buffer is checked every 2 s.
 - Big files (≥ 1.5 MiB) are decided on every read: no treesitter, LSP, swap or undo. Treesitter highlighting also stops above 512 KiB.
+- LSP is refused above 512 KiB before any server starts (`core/lsp.lua` wraps `vim.lsp.start`, since servers receive the whole file on didOpen); a one-time `○ LSP off · big file` notice. `:let b:lsp_force = 1 | e` overrides.
 
 ## Gotchas
 

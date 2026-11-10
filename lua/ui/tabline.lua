@@ -17,12 +17,13 @@ end
 
 -- Inactive tabs sit on TabLine's surface, so accent colours are re-derived onto that background.
 local derived = {}
-local function on_surface(group)
-  if derived[group] then return derived[group] end
+local function on_surface(group, bold)
+  local name = "AosTab" .. group .. (bold and "Bold" or "")
+  if derived[name] then return name end
   local bg = vim.api.nvim_get_hl(0, { name = "TabLine", link = false }).bg
-  derived[group] = "AosTab" .. group
-  vim.api.nvim_set_hl(0, derived[group], { fg = vim.api.nvim_get_hl(0, { name = group, link = false }).fg, bg = bg })
-  return derived[group]
+  vim.api.nvim_set_hl(0, name, { fg = vim.api.nvim_get_hl(0, { name = group, link = false }).fg, bg = bg, bold = bold })
+  derived[name] = true
+  return name
 end
 
 local function tail(path, depth)
@@ -51,9 +52,10 @@ local lock = "\u{f023}"
 
 local function buf_label(buf, index, name)
   local current = buf == vim.api.nvim_get_current_buf()
-  local base = "%#" .. (current and "TabLineSel" or "TabLine") .. "#"
-  local function paint(group, text) return (current and "" or "%#" .. on_surface(group) .. "#") .. text .. base end
+  local base = "%#" .. (current and on_surface("Normal", true) or "TabLine") .. "#"
+  local function paint(group, text) return "%#" .. on_surface(group) .. "#" .. text .. base end
   local mark = require("agent.review").pending(buf) > 0 and g.attention or current and g.reply or g.todo
+  local chip = current and ("%%#TabLineSel# %s %d %s "):format(mark, index, base) or ("%s %s %d:"):format(base, mark, index)
   local terminal = vim.bo[buf].buftype == "terminal"
   local icon, icon_hl = icons.get_icon(terminal and "terminal" or name:match("[^/]*$"), nil, { default = true })
   if name == "" then name = "[No Name]" end
@@ -65,8 +67,8 @@ local function buf_label(buf, index, name)
   local counts = vim.diagnostic.count(buf)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
-  if current then label = label .. (" %d:%d"):format(vim.fn.line("."), vim.fn.charcol(".")) end
-  return ("%%%d@v:lua.AosTabClick@%s %s %d:%s %%X"):format(buf, base, mark, index, label), current
+  if current then label = label .. " " .. paint("Statement", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
+  return ("%%%d@v:lua.AosTabClick@%s%s %%X"):format(buf, chip, label), current
 end
 
 local function tabs(room)
@@ -114,6 +116,7 @@ local function file_info()
   clients = vim.tbl_filter(function(n) return n ~= "copilot" end, clients)
   local out = ("%%#%s#%s %%#AosDim#%s"):format(hl, icon, esc(ft))
   if #clients > 0 then out = out .. "%#AosFaint# · %#AosId#" .. esc(table.concat(clients, ",")) end
+  if vim.b.lsp_off then out = out .. "%#AosFaint# · lsp off" end
   local enc = vim.bo.fileencoding
   if (enc ~= "" and enc ~= "utf-8") or vim.bo.fileformat ~= "unix" then
     out = out .. "%#AosFaint# · %#AosRunning#" .. esc(enc) .. (vim.bo.fileformat ~= "unix" and " " .. vim.bo.fileformat or "")
