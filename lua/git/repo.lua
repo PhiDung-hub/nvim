@@ -1,30 +1,92 @@
 -- Shared git layer: async runs, repo root, parsed status and file contents at a revision.
 local M = {}
 
--- Runs `git -C cwd args…`; cb(ok, stdout, stderr) on the main loop. Returns the vim.SystemObj.
+-- Every git read is capped at BUDGET ms: past that it is killed, and that feature stays off for the repo for
+-- PAUSE ms (one notice), so a slow repo never keeps working in the background. Network commands get NET_BUDGET.
+-- Local writes (add, apply, commit, switch…) are never killed: a kill mid-write can leave index.lock behind.
+-- Reads never download missing objects of a partial clone (GIT_NO_LAZY_FETCH), which is what made blame slow.
+local BUDGET, NET_BUDGET, PAUSE = 3000, 60000, 10 * 60 * 1000
+local READ = {}
+for _, c in ipairs({ "blame", "log", "show", "diff", "status", "rev-parse", "rev-list", "for-each-ref", "show-ref", "cat-file",
+  "ls-files", "ls-tree", "name-rev", "merge-base", "describe", "symbolic-ref", "check-ignore", "grep" }) do READ[c] = true end
+local NET = { fetch = true, pull = true, push = true, ["ls-remote"] = true, clone = true }
+local slow = {} -- root .. "\0" .. feature -> uv time it was paused
+
+local function subcommand(args)
+  for _, a in ipairs(args) do
+    if a:sub(1, 1) ~= "-" then return a end
+  end
+end
+
+local function budget(args, opts)
+  local sub = subcommand(args)
+  if opts.timeout then return opts.timeout, sub end
+  return READ[sub] and BUDGET or NET[sub] and NET_BUDGET or nil, sub
+end
+
+local function command(args, cwd)
+  return vim.list_extend({ "git", "-C", cwd or vim.fn.getcwd(), "--no-pager", "-c", "color.ui=never" }, args)
+end
+
+local function env(sub)
+  local e = { GIT_TERMINAL_PROMPT = "0", GIT_EDITOR = "true" }
+  if READ[sub] then e.GIT_NO_LAZY_FETCH, e.GIT_OPTIONAL_LOCKS = "1", "0" end
+  return e
+end
+
+local function pause(key, feature, ms)
+  if slow[key] then return end
+  slow[key] = vim.uv.now()
+  vim.notify(("○ git %s paused for this repo · took over %.1f s"):format(feature, ms / 1000), vim.log.levels.WARN)
+end
+
+-- True while `feature` (default: the subcommand) is paused for `root` after a timeout.
+function M.is_slow(root, feature)
+  local at = slow[(root or "") .. "\0" .. feature]
+  return at ~= nil and vim.uv.now() - at < PAUSE
+end
+
+local skipped = { kill = function() end, is_closing = function() return true end, wait = function() return { code = 124 } end }
+
+-- Runs `git -C cwd args…`; cb(ok, stdout, stderr, timed_out) on the main loop. Returns the vim.SystemObj (or a stub
+-- when the feature is paused). opts: stdin, timeout (ms), feature (name for the pause notice), binary (raw bytes).
 function M.run(args, cwd, cb, opts)
   opts = opts or {}
-  local cmd = vim.list_extend({ "git", "-C", cwd or vim.fn.getcwd(), "--no-pager", "-c", "color.ui=never" }, args)
-  return vim.system(cmd, { text = true, stdin = opts.stdin, env = { GIT_TERMINAL_PROMPT = "0", GIT_EDITOR = "true" } }, function(r)
-    vim.schedule(function() cb(r.code == 0, r.stdout or "", r.stderr or "") end)
+  local limit, sub = budget(args, opts)
+  local feature = opts.feature or sub or "git"
+  local key = (cwd or vim.fn.getcwd()) .. "\0" .. feature
+  if limit and M.is_slow(cwd or vim.fn.getcwd(), feature) then
+    vim.schedule(function() cb(false, "", "skipped: git " .. feature .. " is paused (slow repo)", true) end)
+    return skipped
+  end
+  local started = vim.uv.now()
+  return vim.system(command(args, cwd), { text = not opts.binary, stdin = opts.stdin, env = env(sub), timeout = limit }, function(r)
+    local timed_out = limit ~= nil and r.code == 124 and vim.uv.now() - started >= limit
+    vim.schedule(function()
+      if timed_out then pause(key, feature, limit) end
+      cb(r.code == 0, r.stdout or "", timed_out and ("timed out after %.1f s"):format(limit / 1000) or r.stderr or "", timed_out)
+    end)
   end)
 end
 
+-- Blocking read for the few call sites that need an answer now; never waits longer than BUDGET.
 function M.run_sync(args, cwd)
-  local cmd = vim.list_extend({ "git", "-C", cwd or vim.fn.getcwd(), "--no-pager", "-c", "color.ui=never" }, args)
-  local r = vim.system(cmd, { text = true }):wait()
+  local sub = subcommand(args)
+  local r = vim.system(command(args, cwd), { text = true, env = env(sub), timeout = BUDGET }):wait()
   return r.code == 0, r.stdout or "", r.stderr or ""
 end
 
-local roots = {}
+local roots, misses = {}, {}
 
 -- Worktree root containing `path` (a file or directory; default cwd), or nil outside git.
 function M.root(path)
   path = path and path ~= "" and vim.fs.normalize(path) or vim.fn.getcwd()
   local dir = vim.fn.isdirectory(path) == 1 and path or vim.fs.dirname(path)
-  if roots[dir] == nil then
+  local hit = roots[dir]
+  if hit == nil or (hit == false and vim.uv.now() - (misses[dir] or 0) > 5000) then
     local ok, out = M.run_sync({ "rev-parse", "--show-toplevel" }, dir)
     roots[dir] = ok and vim.trim(out) or false
+    misses[dir] = vim.uv.now()
   end
   return roots[dir] or nil
 end
@@ -81,8 +143,7 @@ end
 
 -- M.show without text mode, so CRLF line endings come back exactly as stored. cb(bytes|nil).
 function M.show_raw(root, rev, path, cb)
-  local cmd = { "git", "-C", root, "--no-pager", "show", rev .. ":" .. path }
-  vim.system(cmd, {}, function(r) vim.schedule(function() cb(r.code == 0 and (r.stdout or "") or nil) end) end)
+  M.run({ "show", rev .. ":" .. path }, root, function(ok, out) cb(ok and out or nil) end, { binary = true })
 end
 
 return M
