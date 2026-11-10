@@ -36,12 +36,6 @@ return {
     },
   },
   {
-    "neovim/nvim-lspconfig",
-    event = { "BufReadPre", "BufNewFile" },
-    dependencies = { "saghen/blink.cmp" },
-    config = function() require("core.lsp").setup() end,
-  },
-  {
     "mason-org/mason.nvim",
     cmd = { "Mason", "MasonInstall", "MasonUpdate" },
     opts = { ui = { border = "single" } },
@@ -152,7 +146,6 @@ return {
   {
     "Julian/lean.nvim",
     event = { "BufReadPre *.lean", "BufNewFile *.lean" },
-    dependencies = { "neovim/nvim-lspconfig" },
     init = function() vim.g.lean_config = { mappings = true } end,
     config = function() end,
   },
