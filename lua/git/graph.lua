@@ -9,6 +9,7 @@ local ns = vim.api.nvim_create_namespace("git.graph")
 local fns = vim.api.nvim_create_namespace("git.graph.float")
 local PAGE, LANES, MAX_ART = 400, 6, 40
 local FORMAT = "%H%x00%P%x00%D%x00%an%x00%at%x00%s"
+local UNBORN = { "does not have any commits", "unknown revision", "bad revision 'HEAD'" }
 local DIFFOPT = "internal,filler,closeoff,algorithm:histogram,linematch:60,inline:char"
 local letter_hl = { M = "AosRunning", A = "AosDone", D = "AosFailed", R = "AosId", C = "AosId", T = "AosRunning", U = "AosDone" }
 local corner = { ["end"] = { "╰", "╯" }, start = { "╭", "╮" }, join = { "├", "┤" } }
@@ -268,34 +269,55 @@ end
 
 -- Loading --------------------------------------------------------------------------------------
 
--- Puts the cursor back on the commit it was on when the graph last closed.
+local load
+
+-- The row under the cursor as { sha, path?, line }.
+local function anchor()
+  if not vim.api.nvim_win_is_valid(S.win) then return end
+  local line = vim.api.nvim_win_get_cursor(S.win)[1]
+  local row = S.rows[line]
+  return row and { sha = row.c.sha, path = row.f and row.f.path, line = line }
+end
+
+-- Puts the cursor back on the row it was on before a refresh or when the graph last closed;
+-- one extra page is loaded when that commit has not arrived yet.
 local function restore()
   local last = S.restore
   if not (last and vim.api.nvim_win_is_valid(S.win)) then return end
-  S.restore = nil
   for i, row in ipairs(S.rows) do
-    if row.c.sha == last.sha and not row.f then return vim.api.nvim_win_set_cursor(S.win, { i, 0 }) end
+    if row.c.sha == last.sha and (row.f and row.f.path) == last.path then
+      S.restore = nil
+      return vim.api.nvim_win_set_cursor(S.win, { i, 0 })
+    end
   end
+  if not (S.done or last.more) then
+    last.more = true
+    return load()
+  end
+  S.restore = nil
   vim.api.nvim_win_set_cursor(S.win, { math.min(last.line, vim.api.nvim_buf_line_count(S.buf)), 0 })
 end
 
-local function load()
+-- A refresh keeps the old rows on screen and reloads as many commits as were shown, then swaps them in.
+function load()
   if S.loading or S.done then return end
   S.loading = true
-  local gen = S.gen
-  local args = { "log", "--topo-order", "--decorate=full", "--format=" .. FORMAT, "--skip=" .. #S.commits, "-n", tostring(PAGE) }
-  vim.list_extend(args, S.all and { "--exclude=refs/stash", "--all" } or { "HEAD" })
+  local gen, reset = S.gen, S.reset
+  local count = reset and math.max(PAGE, #S.commits) or PAGE
+  local args = { "log", "--topo-order", "--decorate=full", "--format=" .. FORMAT, "--skip=" .. (reset and 0 or #S.commits), "-n", tostring(count) }
+  vim.list_extend(args, S.all and { "--branches", "--remotes", "--tags", "HEAD", "--" } or { "HEAD", "--" })
   repo.run(args, S.root, function(ok, out, err)
     if not S or gen ~= S.gen then return end
     local t0, n = vim.uv.hrtime(), 0
     S.loading = false
-    if not ok and not (err:find("does not have any commits", 1, true) or err:find("unknown revision", 1, true)) then S.error = err end
+    if reset then S.restore, S.commits, S.lanes, S.color, S.reset = anchor() or S.restore, {}, {}, 0, nil end
+    if not ok and not vim.iter(UNBORN):any(function(m) return err:find(m, 1, true) end) then S.error = err end
     for line in out:gmatch("[^\n]+") do
       local c = parse(line)
       layout(c)
       S.commits[#S.commits + 1], n = c, n + 1
     end
-    S.done = n < PAGE
+    S.done = n < count
     render()
     restore()
     S.ms = (vim.uv.hrtime() - t0) / 1e6
@@ -306,13 +328,28 @@ end
 function M.refresh()
   if not S then return end
   S.gen = S.gen + 1
-  S.commits, S.lanes, S.color, S.done, S.loading, S.error = {}, {}, 0, false, false, nil
+  S.reset, S.done, S.loading, S.error = true, false, false, nil
   repo.status(S.root, function(st)
     if not S then return end
     S.status = st
     vim.cmd.redrawstatus({ bang = true })
   end)
+  repo.run({ "show-ref", "--head" }, S.root, function(_, out) if S then S.refs = out end end)
   load()
+end
+
+-- Refreshes only when a ref or HEAD moved, so focus and file events cost one `show-ref` on a big repo.
+local function check()
+  if not S then return end
+  repo.run({ "show-ref", "--head" }, S.root, function(_, out)
+    if S and out ~= S.refs then M.refresh() end
+  end)
+end
+
+local function poke()
+  if not S then return end
+  S.timer:stop()
+  S.timer:start(200, 0, vim.schedule_wrap(check))
 end
 
 local HINTS = { "/ filter", "b branches", "⏎ files", "K show", "c checkout", "y yank", "r refresh", "O open", "q close" }
@@ -487,7 +524,8 @@ local function show_float(c, out)
   vim.hl.range(buf, fns, "Title", { body_at, 0 }, { body_at, -1 })
   for i = stat_at + 1, #lines do stat_hls(buf, i - 1, lines[i]) end
   vim.bo[buf].modifiable, vim.bo[buf].bufhidden = false, "wipe"
-  local width = math.min(math.max(60, unpack(vim.tbl_map(vim.api.nvim_strwidth, lines))) + 2, vim.o.columns - 6)
+  local widest = vim.iter(lines):fold(60, function(m, l) return math.max(m, vim.api.nvim_strwidth(l)) end)
+  local width = math.min(widest + 2, vim.o.columns - 6)
   local height = math.min(#lines, vim.o.lines - 6)
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor", style = "minimal", width = width, height = height, row = math.floor((vim.o.lines - height) / 3),
@@ -500,7 +538,7 @@ local function show_float(c, out)
 end
 
 local function show(c)
-  local args = { "show", "--stat=100", "--diff-merges=first-parent", "--date=format:%Y-%m-%d %H:%M", "--format=%H%x00%an <%ae>%x00%ad%x00%B%x00", c.sha }
+  local args = { "show", "--stat=100", "--stat-count=300", "--diff-merges=first-parent", "--date=format:%Y-%m-%d %H:%M", "--format=%H%x00%an <%ae>%x00%ad%x00%B%x00", c.sha }
   repo.run(args, S.root, function(ok, out, err)
     if not ok then return vim.notify("✗ git show\n" .. err, vim.log.levels.ERROR) end
     show_float(c, out)
@@ -586,6 +624,8 @@ function M.close()
     M.last = { root = s.root, line = line, sha = s.rows[line] and s.rows[line].c.sha }
   end
   S = nil
+  s.timer:close()
+  for _, w in ipairs(s.watchers) do w:close() end
   pcall(vim.api.nvim_del_augroup_by_name, "GitGraphBuf")
   pcall(vim.api.nvim_win_close, s.win, true)
   pcall(vim.api.nvim_buf_delete, s.buf, { force = true })
@@ -610,6 +650,32 @@ local function autocmds(buf, win)
     group = group, buffer = buf,
     callback = function() if vim.fn.line(".") > vim.fn.line("$") - 60 then load() end end,
   })
+  vim.api.nvim_create_autocmd("FocusGained", { group = group, callback = poke })
+end
+
+local function watch(dir, names)
+  local w = vim.uv.new_fs_event()
+  if not w then return end
+  w:start(dir, {}, function(_, name)
+    if name and not name:match("%.lock$") and (not names or names[name]) then vim.schedule(poke) end
+  end)
+  S.watchers[#S.watchers + 1] = w
+end
+
+-- inotify is not recursive: the git dirs (HEAD, packed-refs) plus every directory under refs/.
+local function watch_refs()
+  local s = S
+  repo.run({ "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir" }, S.root, function(ok, out)
+    if not (ok and S == s) then return end
+    local git_dir, common = unpack(vim.split(vim.trim(out), "\n", { plain = true }))
+    local top = { HEAD = true, ["packed-refs"] = true }
+    watch(git_dir, top)
+    if common ~= git_dir then watch(common, top) end
+    watch(common .. "/refs")
+    for name, kind in vim.fs.dir(common .. "/refs", { depth = 6 }) do
+      if kind == "directory" then watch(common .. "/refs/" .. name) end
+    end
+  end)
 end
 
 function M.open()
@@ -623,12 +689,14 @@ function M.open()
   cfg.style, cfg.title, cfg.title_pos = "minimal", " ❯ git log ", "left"
   local win = vim.api.nvim_open_win(buf, true, cfg)
   S = { root = root, buf = buf, win = win, origin = origin, all = true, filter = "", open = {}, files = {}, gen = 0, hls = {}, rows = {} }
+  S.commits, S.watchers, S.timer = {}, {}, assert(vim.uv.new_timer())
   S.restore = M.last and M.last.root == root and M.last or nil
   vim.wo[win].cursorline, vim.wo[win].wrap, vim.wo[win].foldcolumn = true, false, "1"
   vim.wo[win].winbar = "%!v:lua.require'git.graph'.header()"
   vim.bo[buf].filetype = "gitgraph"
   for lhs, fn in pairs(keys) do vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true }) end
   autocmds(buf, win)
+  watch_refs()
   M.refresh()
 end
 
@@ -649,7 +717,7 @@ function M.setup()
       end
     end,
   })
-  vim.api.nvim_create_autocmd("User", { pattern = "GitChanged", callback = function() M.refresh() end })
+  vim.api.nvim_create_autocmd("User", { pattern = "GitChanged", callback = poke })
   vim.keymap.set("n", "<leader>gl", M.toggle, { desc = "Git graph" })
   vim.api.nvim_create_user_command("GitGraph", M.toggle, { desc = "Source Control Graph" })
 end

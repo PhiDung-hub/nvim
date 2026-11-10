@@ -35,21 +35,29 @@ local function run(root, verb, args, done_msg, cb)
   end)
 end
 
--- target = { kind = "local"|"remote"|"tag"|"detached", name }; a remote creates a local tracking branch.
+-- `switch` never reads its argument as a pathspec, unlike `checkout <name>` for a branch that no longer exists.
+local function switch_args(t)
+  if t.kind == "local" then return { "switch", "-q", "--no-guess", t.name } end
+  if t.kind == "remote" then return { "switch", "-q", "--track", t.name } end
+  return { "switch", "-q", "--detach", t.kind == "tag" and "refs/tags/" .. t.name or t.name }
+end
+
+-- target = { kind = "local"|"remote"|"tag"|"detached", name }; a remote checks out its existing local branch,
+-- else creates a tracking one.
 function M.checkout(root, target, cb)
-  local args = { "checkout", "-q" }
-  if target.kind == "remote" then vim.list_extend(args, { "--track", target.name })
-  elseif target.kind == "tag" then vim.list_extend(args, { "--detach", "refs/tags/" .. target.name })
-  elseif target.kind == "detached" then vim.list_extend(args, { "--detach", target.name })
-  else args[#args + 1] = target.name end
-  run(root, "checkout", args, "checked out " .. target.name, cb)
+  local short = target.kind == "remote" and target.name:match("^[^/]+/(.+)$")
+  if not short then return run(root, "checkout", switch_args(target), "checked out " .. target.name, cb) end
+  repo.run({ "show-ref", "--verify", "-q", "refs/heads/" .. short }, root, function(exists)
+    local t = exists and { kind = "local", name = short } or target
+    run(root, "checkout", switch_args(t), "checked out " .. t.name, cb)
+  end)
 end
 
 function M.create(name, from, root, cb)
   root = root or M.root()
   name = vim.trim(name or ""):gsub("%s+", "-")
   if name == "" then return end
-  run(root, "branch", { "checkout", "-q", "-b", name, from }, "created " .. name .. (from and " from " .. from or ""), cb)
+  run(root, "branch", { "switch", "-q", "-c", name, from }, "created " .. name .. (from and " from " .. from or ""), cb)
 end
 
 -- cb(true) when tracked files differ from HEAD.
@@ -107,11 +115,6 @@ local function choose(item, items, root)
   local d = item.data
   if d.action == "create" then return ask_name(nil, root) end
   if d.action == "from" then return pick_from(items, root) end
-  if d.kind == "remote" then
-    local name = d.name:match("^[^/]+/(.+)$")
-    local existing = vim.iter(items):find(function(i) return i.data.kind == "local" and i.data.name == name end)
-    d = existing and existing.data or d
-  end
   if d.head or d.action then return end
   M.checkout(root, d)
 end
