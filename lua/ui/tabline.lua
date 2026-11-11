@@ -15,7 +15,7 @@ function M.listed()
   return vim.tbl_filter(function(b) return vim.bo[b].buflisted and not blank(b) end, vim.api.nvim_list_bufs())
 end
 
--- Tabs sit on TabLine's surface or TabLineSel's tinted band, so accent colours are re-derived onto that background.
+-- The current tab sits on TabLineSel's band, so its accent colours are re-derived onto that background.
 local derived = {}
 local function on_surface(group, base)
   base = base or "TabLine"
@@ -58,8 +58,9 @@ local function buf_label(buf, index, name)
   local is_current = buf == vim.api.nvim_get_current_buf()
   local current = is_current and focused
   local base = "%#" .. (not focused and (is_current and "AosTabIdleSel" or "AosTabIdle") or current and "TabLineSel" or "TabLine") .. "#"
-  local function paint(group, text)
-    if not focused then return text end
+  -- Other tabs stay dim; only the modified mark and diagnostics keep their colour there.
+  local function paint(group, text, keep)
+    if not focused or not (current or keep) then return text end
     return "%#" .. on_surface(group, current and "TabLineSel") .. "#" .. text .. base
   end
   local mark = require("agent.review").pending(buf) > 0 and g.attention .. " " or ""
@@ -69,13 +70,13 @@ local function buf_label(buf, index, name)
   if #name > 28 then name = "…" .. name:sub(-27) end
   local dir, file = name:match("^(.*/)([^/]*)$")
   local label = paint(icon_hl, icon) .. " " .. (dir and paint("AosDim", esc(dir)) .. esc(file) or esc(name))
-  if vim.bo[buf].modified then label = label .. " " .. paint("AosRunning", "+") end
+  if vim.bo[buf].modified then label = label .. " " .. paint("AosRunning", "+", true) end
   if not terminal and (vim.bo[buf].readonly or not vim.bo[buf].modifiable) then label = label .. " " .. paint("AosDim", lock) end
   local counts = vim.diagnostic.count(buf)
-  if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
-  if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
+  if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1], true) end
+  if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2], true) end
   if current then label = label .. " " .. paint("AosSha", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
-  local head = current and paint("AosTabMark", ("%s%d:"):format(mark, index)) or ("%s%d:"):format(mark, index)
+  local head = (current and "%#AosTabMark#● " .. base or "") .. ("%s%d:"):format(mark, index)
   local text = ("%s%s%s%s%s"):format(base, PAD, head, label, PAD)
   return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), is_current
 end
@@ -101,13 +102,7 @@ local function tabs(room)
   end
   local before = first > 1 and ("%%#AosDim#‹%d "):format(first - 1) or ""
   local after = last < #parts and (" %%#AosDim#%d›"):format(#parts - last) or ""
-  local sep = "%#" .. on_surface("AosFaint") .. "#│"
-  local out = {}
-  for i = first, last do
-    if focused and i > first and i ~= current and i - 1 ~= current then out[#out + 1] = sep end
-    out[#out + 1] = parts[i]
-  end
-  return before .. table.concat(out) .. "%#TabLineFill#" .. after
+  return before .. table.concat(parts, "", first, last) .. "%#TabLineFill#" .. after
 end
 
 local modes = { i = "insert", v = "visual", V = "v-line", ["\22"] = "v-block", R = "replace", c = "command", t = "term" }

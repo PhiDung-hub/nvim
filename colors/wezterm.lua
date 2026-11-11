@@ -1,4 +1,4 @@
--- Agent OS colorscheme: chrome follows DESIGN.md state colours; code uses Tokyo Night syntax hues.
+-- WezTerm colorscheme: chrome follows DESIGN.md state colours; code uses Tokyo Night syntax hues.
 local t = require("design")
 local syntax = { orange = "#ff9e64", teal = "#73daca", operator = "#89ddff", type = "#2ac3de" }
 
@@ -11,9 +11,11 @@ local function blend(fg, amount)
   return out
 end
 
+local tab_bar, tab_band = "#161619", "#25262c"
+
 vim.cmd("hi clear")
 vim.o.background = "dark"
-vim.g.colors_name = "agentos"
+vim.g.colors_name = "wezterm"
 
 local hl = {
   -- Content leaves the background to WezTerm, so its wallpaper shows; floats keep `ground` (DESIGN.md).
@@ -56,13 +58,13 @@ local hl = {
   StatusLineNC = { fg = t.faint },
   WinBar = { fg = t.text, bold = true },
   WinBarNC = { fg = t.dim },
-  TabLine = { fg = t.cyan, bg = t.surface },
-  TabLineSel = { fg = t.text, bg = blend(t.cyan, 0.22), bold = true },
-  AosTabMark = { fg = t.cyan, bold = true },
-  -- Unfocused pane: dark and dim, the current tab on a faint band (the artifact tab bar).
-  AosTabIdle = { fg = t.dim },
-  AosTabIdleSel = { fg = t.text, bg = blend(t.muted, 0.07) },
-  TabLineFill = {},
+  -- The published pages' tab bar: a dark bar, dim tabs, the current one on a faint band.
+  TabLine = { fg = t.dim, bg = tab_bar },
+  TabLineSel = { fg = t.text, bg = tab_band, bold = true },
+  AosTabMark = { fg = t.green, bg = tab_band },
+  AosTabIdle = { fg = t.dim, bg = tab_bar },
+  AosTabIdleSel = { fg = t.text, bg = tab_band },
+  TabLineFill = { bg = tab_bar },
   Title = { fg = t.cyan, bold = true },
   Directory = { fg = t.cyan },
   ErrorMsg = { fg = t.red, bold = true },

@@ -77,4 +77,4 @@ if not (vim.env.WAYLAND_DISPLAY and vim.fn.executable("wl-copy") == 1) then
 end
 
 vim.filetype.add({ extension = { mdx = "lsp_markdown", move = "move" } })
-vim.cmd.colorscheme("agentos")
+vim.cmd.colorscheme("wezterm")
