@@ -139,7 +139,7 @@ function M.open()
   vim.bo[buf].bufhidden = "wipe"
   local width, height = math.floor(vim.o.columns * 0.8), math.floor(vim.o.lines * 0.7)
   win = api.nvim_open_win(buf, true, {
-    relative = "editor", width = width, height = height, style = "minimal", border = "single",
+    relative = "editor", width = width, height = height, style = "minimal",
     row = math.floor((vim.o.lines - height) / 2), col = math.floor((vim.o.columns - width) / 2),
     title = " ❯ pack ", title_pos = "left",
   })

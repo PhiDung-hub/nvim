@@ -52,7 +52,8 @@ opt.laststatus = 0
 opt.showtabline = 2
 opt.ruler = false
 opt.pumheight = 10
-opt.winborder = "single"
+-- Square lines on the cells' outer edge: `single` draws mid-cell and leaves half a cell of ground outside it.
+opt.winborder = "🭽,▔,🭾,▕,🭿,▁,🭼,▏"
 opt.list = true
 -- Indent guides without a plugin.
 opt.listchars = { tab = "▏ ", leadmultispace = "▏ ", trail = "·", nbsp = "␣", extends = "…", precedes = "…" }

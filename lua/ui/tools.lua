@@ -126,7 +126,8 @@ end
 local function plain_steps(t, stage)
   if t.npm then return { { "npm", "install", "--silent", "--prefix", stage, t.npm .. "@latest" } } end
   if t.pypi then return { { "python3", "-m", "venv", stage .. "/venv" }, { stage .. "/venv/bin/pip", "install", "-q", "-U", t.pypi } } end
-  return { vim.list_extend({ "cargo", "install", "--locked", "--root", stage }, t.cargo) }
+  -- Not --locked: move-analyzer's lockfile pins an ethnum that current rustc rejects (E0512).
+  return { vim.list_extend({ "cargo", "install", "--root", stage }, t.cargo) }
 end
 
 local function installed_version(t, stage, tag)
@@ -139,7 +140,10 @@ local function installed_version(t, stage, tag)
     local info = vim.fn.glob(stage .. "/venv/lib*/python*/site-packages/" .. t.pypi .. "-*.dist-info", false, true)[1]
     return info and info:match("%-([%d%.]+)%.dist%-info$") or "latest"
   end
-  return "latest"
+  local crates = read_json(stage .. "/.crates2.json")
+  local key = crates and next(crates.installs or {}) or ""
+  local rev = key:match("#(%x+)%)$")
+  return rev and rev:sub(1, 7) or key:match("^%S+ (%S+)") or "latest"
 end
 
 -- Swap the staged package in, then (re)link bins and write wrappers and a receipt.
@@ -214,7 +218,7 @@ function M.open()
   vim.bo[buf].bufhidden = "wipe"
   local width, height = math.min(100, vim.o.columns - 4), math.min(#TOOLS + 4, vim.o.lines - 4)
   win = api.nvim_open_win(buf, true, {
-    relative = "editor", width = width, height = height, style = "minimal", border = "single",
+    relative = "editor", width = width, height = height, style = "minimal",
     row = math.floor((vim.o.lines - height) / 2), col = math.floor((vim.o.columns - width) / 2),
     title = " ❯ tools ", title_pos = "left",
   })

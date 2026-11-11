@@ -54,48 +54,6 @@ end
 -- Hover and peek -----------------------------------------------------------------------------
 
 local hover_ns = vim.api.nvim_create_namespace("aos.hover")
-local function is_rule(l) return l:match("^ ? ? ?[-*_][-*_ ]*$") and select(2, l:gsub("[-*_]", "")) >= 3 end
-
--- Servers pad sections with blank lines and stack rules (lua_ls: `---` after a code fence); keep one thin rule
--- between sections. `***` because `---` under a paragraph line would turn it into a setext heading.
-local literals = { { "%f[%w]0[xXbo]%x+%f[^%w]", "@number" }, { "%f[%w_]%d[%d_]*%.?%d*%f[^%w_]", "@number" },
-  { "%f[%w]true%f[^%w]", "@boolean" }, { "%f[%w]false%f[^%w]", "@boolean" }, { "%f[%w]nil%f[^%w]", "@constant.builtin" },
-  { "%f[%w]null%f[^%w]", "@constant.builtin" }, { "%f[%w]None%f[^%w]", "@constant.builtin" } }
-
--- Prose outside code fences gets no treesitter colour; paint literal values (sizes, offsets, defaults) like code.
-local function paint_literals(buf)
-  local fence = false
-  for i, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
-    if l:match("^%s*```") then fence = not fence elseif not fence then
-      for _, lit in ipairs(literals) do
-        for s, e in l:gmatch("()" .. lit[1] .. "()") do
-          vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, s - 1, { end_col = e - 1, hl_group = lit[2], priority = 150 })
-        end
-      end
-    end
-  end
-end
-
-local function tidy(lines)
-  local out, fence, closed = {}, false, false
-  for _, l in ipairs(lines) do
-    local is_fence = l:match("^%s*```") ~= nil
-    if fence or is_fence then
-      out[#out + 1] = l
-      if is_fence then fence = not fence end
-      closed = not fence
-    elseif is_rule(l) then
-      while out[#out] == "" do out[#out] = nil end
-      if #out > 0 and out[#out] ~= "***" and not closed then out[#out + 1] = "***" end
-    elseif l ~= "" then
-      out[#out + 1], closed = l, false
-    elseif #out > 0 and out[#out] ~= "" and out[#out] ~= "***" and not closed then
-      out[#out + 1] = l
-    end
-  end
-  while out[#out] == "" or out[#out] == "***" do out[#out] = nil end
-  return vim.tbl_map(function(l) return " " .. l end, out)
-end
 
 function M.hover()
   local params = function(client) return vim.lsp.util.make_position_params(0, client.offset_encoding) end
@@ -108,7 +66,7 @@ function M.hover()
         vim.list_extend(lines, vim.lsp.util.convert_input_to_markdown_lines(contents))
       end
     end
-    lines = tidy(lines)
+    lines = require("ui.markdown").doc(lines)
     if #lines == 0 then return vim.notify("○ no hover information", vim.log.levels.INFO) end
     local buf, win = vim.lsp.util.open_floating_preview(lines, "markdown", {
       focus_id = "textDocument/hover", max_width = 90, max_height = 25, title = title("hover"), title_pos = "left",
@@ -118,7 +76,7 @@ function M.hover()
         vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, 0, { end_col = #l, hl_group = "Whitespace", priority = 250 })
       end
     end
-    paint_literals(buf)
+    require("ui.markdown").paint_literals(buf)
     local wh = vim.wo[win].winhighlight
     vim.wo[win].winhighlight = (wh ~= "" and wh .. "," or "") .. "Search:None,CurSearch:None,IncSearch:None"
   end)

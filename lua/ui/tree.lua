@@ -1244,7 +1244,7 @@ end
 
 local function popup(buf, title, width, height, focus)
   width, height = math.max(1, math.min(width, vim.o.columns - 4)), math.max(1, math.min(height, vim.o.lines - 5))
-  local win = api.nvim_open_win(buf, focus == true, { relative = "editor", border = "single", title = " ❯ " .. title .. " ",
+  local win = api.nvim_open_win(buf, focus == true, { relative = "editor", title = " ❯ " .. title .. " ",
     width = width, height = height, row = math.max(0, math.floor((vim.o.lines - height - 2) / 2)),
     col = math.max(0, math.floor((vim.o.columns - width - 2) / 2)) })
   local wo = vim.wo[win]
@@ -1387,7 +1387,7 @@ local function window_picker()
     api.nvim_buf_set_lines(buf, 0, -1, false, { " " .. label .. " " })
     vim.bo[buf].bufhidden = "wipe"
     floats[#floats + 1] = api.nvim_open_win(buf, false, { relative = "win", win = win, width = #label + 2, height = 1,
-      row = 0, col = math.max(0, math.floor(api.nvim_win_get_width(win) / 2)), border = "single", focusable = false })
+      row = 0, col = math.max(0, math.floor(api.nvim_win_get_width(win) / 2)), focusable = false })
   end, function(win) open_file(nil, win) end)
 end
 
@@ -1870,7 +1870,7 @@ function M.open(root, float, inplace, source, side)
     local width, height = math.min(80, vim.o.columns - 4), math.max(1, math.floor(vim.o.lines * 0.8))
     S.win = api.nvim_open_win(S.buf, true, { relative = "editor", width = width, height = height,
       row = math.floor((vim.o.lines - height - 2) / 2), col = math.floor((vim.o.columns - width - 2) / 2),
-      border = "single", title = source == "buffers" and " ❯ buffers " or " ❯ tree ", title_pos = "left" })
+      title = source == "buffers" and " ❯ buffers " or " ❯ tree ", title_pos = "left" })
   elseif inplace then
     S.win = api.nvim_win_is_valid(inplace_win) and inplace_win or api.nvim_get_current_win()
     api.nvim_set_current_win(S.win)

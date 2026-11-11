@@ -1,13 +1,9 @@
 -- ext_cmdline cannot reposition the native pum, so its list is drawn beneath the centred float.
--- Borders use one-eighth blocks on the cells' outer edge, so the ground fill ends at the line;
--- `single` box lines sit mid-cell and leave half a cell of ground outside them.
 local M = {}
 local api = vim.api
 local ns = api.nvim_create_namespace("ui.cmdline")
 local uins = api.nvim_create_namespace("ui.cmdline.attach")
 local titles = { [":"] = " ❯ command ", ["/"] = " ❯ search ", ["?"] = " ❯ search back ", ["="] = " ❯ expression " }
-local edge = { "🭽", "▔", "🭾", "▕", "🭿", "▁", "🭼", "▏" }
-local hanging = { "", "", "", "▕", "🭿", "▁", "🭼", "▏" }
 local S = {}
 local buf, win, menu_buf, menu_win
 
@@ -58,12 +54,21 @@ local function refresh()
   S.items, S.selected = candidates(), 0
 end
 
+-- A history line whose file argument no longer exists (`:w out1.lua`) is not suggested.
+local function stale(entry)
+  if S.firstc ~= ":" then return false end
+  local ok, kind = pcall(vim.fn.getcompletiontype, entry)
+  if not ok or not (kind:match("^file") or kind:match("^dir")) then return false end
+  local arg = entry:match("%s(%S+)$")
+  return arg ~= nil and vim.uv.fs_stat(vim.fn.expand(arg)) == nil
+end
+
 local function from_history()
   local kind = ({ [":"] = ":", ["/"] = "/", ["?"] = "/" })[S.firstc]
   if not kind or S.text == "" then return end
   for i = 1, math.min(vim.fn.histnr(kind), 200) do
     local entry = vim.fn.histget(kind, -i)
-    if #entry > #S.text and vim.startswith(entry, S.text) then return entry:sub(#S.text + 1) end
+    if #entry > #S.text and vim.startswith(entry, S.text) and not stale(entry) then return entry:sub(#S.text + 1) end
   end
 end
 
@@ -112,7 +117,8 @@ local function render_menu(row, col, width)
   api.nvim_buf_clear_namespace(menu_buf, ns, 0, -1)
   local commands = S.firstc == ":" and not S.text:find("%s") and api.nvim_get_commands({}) or {}
   for i = 0, height - 1 do draw_item(i, S.items[S.top + i], width, commands) end
-  local config = { relative = "editor", row = row, col = col, width = width, height = height, border = hanging, style = "minimal", zindex = 201, focusable = false }
+  local e = vim.split(vim.o.winborder, ",")
+  local config = { relative = "editor", row = row, col = col, width = width, height = height, border = { "", "", "", e[4], e[5], e[6], e[7], e[8] }, style = "minimal", zindex = 201, focusable = false }
   if menu_win and api.nvim_win_is_valid(menu_win) then return api.nvim_win_set_config(menu_win, config) end
   menu_win = api.nvim_open_win(menu_buf, false, config)
   vim.wo[menu_win].winhighlight = "Normal:Pmenu,FloatBorder:AosCmpMenuBorder"
@@ -140,7 +146,7 @@ local function render()
   local height = math.min(5, math.ceil((vim.fn.strdisplaywidth(line .. S.ghost) + 1) / width))
   local row, col = math.floor(vim.o.lines * 0.3), math.floor((vim.o.columns - width) / 2)
   local config = {
-    relative = "editor", row = row, col = col, width = width, height = height, style = "minimal", border = edge,
+    relative = "editor", row = row, col = col, width = width, height = height, style = "minimal",
     title = titles[S.firstc] or " ❯ input ", title_pos = "left", zindex = 200, focusable = false,
   }
   api.nvim_buf_set_lines(buf, 0, -1, false, { line })

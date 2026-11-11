@@ -83,7 +83,8 @@ local handlers = {
       p = p:parent()
     end
     local row, col = node:start()
-    overlay(ctx, row, col, bullets[(depth - 1) % #bullets + 1], "AosDim")
+    local offset = vim.treesitter.get_node_text(node, ctx.buf):find("[-+*]") or 1
+    overlay(ctx, row, col + offset - 1, bullets[(depth - 1) % #bullets + 1], "AosDim")
   end,
   check = function(ctx, node)
     local row, _, _, ecol = node:range()
@@ -239,14 +240,118 @@ local function schedule(buf)
 end
 
 -- The highlights query hides fence lines (conceal_lines); keep them so the borders have a line to sit on.
+-- Registered once with query.set: disable_pattern() only touched one cached object, and a re-parse brought the
+-- conceal back.
+local fences_kept = false
 local function keep_fences()
-  local query = vim.treesitter.query.get("markdown", "highlights")
-  for id, directives in pairs(query and query.info.patterns or {}) do
-    for _, d in ipairs(directives) do
-      if d[1] == "set!" and d[2] == "conceal_lines" then query.query:disable_pattern(id) end
+  if fences_kept then return end
+  fences_kept = true
+  local text = {}
+  for _, file in ipairs(vim.treesitter.query.get_files("markdown", "highlights")) do
+    text[#text + 1] = table.concat(vim.fn.readfile(file), "\n")
+  end
+  vim.treesitter.query.set("markdown", "highlights", (table.concat(text, "\n"):gsub("%(#set! conceal_lines \"\"%)", "")))
+end
+
+-- LSP documentation (hover, signature help, completion docs) ----------------------------------
+
+local doc_ns = vim.api.nvim_create_namespace("ui.markdown.doc")
+local function is_rule(l) return l:match("^ ? ? ?[-*_][-*_ ]*$") and select(2, l:gsub("[-*_]", "")) >= 3 end
+
+-- Servers pad sections with blank lines and stack rules (lua_ls: `---` after a code fence); keep one thin rule
+-- between sections. `***` because `---` under a paragraph line would turn it into a setext heading.
+local literals = { { "%f[%w]0[xXbo]%x+%f[^%w]", "@number" }, { "%f[%w_]%d[%d_]*%.?%d*%f[^%w_]", "@number" },
+  { "%f[%w]true%f[^%w]", "@boolean" }, { "%f[%w]false%f[^%w]", "@boolean" }, { "%f[%w]nil%f[^%w]", "@constant.builtin" },
+  { "%f[%w]null%f[^%w]", "@constant.builtin" }, { "%f[%w]None%f[^%w]", "@constant.builtin" } }
+
+-- Prose outside code fences gets no treesitter colour; paint literal values (sizes, offsets, defaults) like code.
+function M.paint_literals(buf)
+  local fence = false
+  for i, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    if l:match("^%s*```") then fence = not fence elseif not fence then
+      for _, lit in ipairs(literals) do
+        for s, e in l:gmatch("()" .. lit[1] .. "()") do
+          vim.api.nvim_buf_set_extmark(buf, doc_ns, i - 1, s - 1, { end_col = e - 1, hl_group = lit[2], priority = 150 })
+        end
+      end
     end
   end
 end
+
+local function tidy(lines)
+  local out, fence, closed = {}, false, false
+  for _, l in ipairs(lines) do
+    local is_fence = l:match("^%s*```") ~= nil
+    if fence or is_fence then
+      out[#out + 1] = l
+      if is_fence then fence = not fence end
+      closed = not fence
+    elseif is_rule(l) then
+      while out[#out] == "" do out[#out] = nil end
+      if #out > 0 and out[#out] ~= "***" and not closed then out[#out + 1] = "***" end
+    elseif l ~= "" then
+      out[#out + 1], closed = l, false
+    elseif #out > 0 and out[#out] ~= "" and out[#out] ~= "***" and not closed then
+      out[#out + 1] = l
+    end
+  end
+  while out[#out] == "" or out[#out] == "***" do out[#out] = nil end
+  return vim.tbl_map(function(l) return " " .. l end, out)
+end
+
+-- Doc-comment tags become grouped lists: lua_ls `@*param* `x` — d`, TypeScript `*@param* `x` — d`, reST `:param x: d`.
+local TAGS = { param = "params", parameter = "params", arg = "params", argument = "params", ["return"] = "returns",
+  returns = "returns", rtype = "returns", throws = "throws", raise = "raises", raises = "raises", field = "fields" }
+
+local function tag(l)
+  local name, rest = l:match("^%s*[*_]?@[*_]?([%a_]+)[*_]*%s*(.*)$")
+  if name then return name, rest end
+  local field, arg, desc = l:match("^%s*:(%a+)%s*([^:]-)%s*:%s*(.*)$")
+  if field and TAGS[field] then return field, arg ~= "" and ("`" .. arg .. "` " .. desc) or desc end
+end
+
+local function add_tag(out, group, name, rest)
+  local label = TAGS[name] or name
+  if not group or group.label ~= label then
+    if #out > 0 and out[#out] ~= "" then out[#out + 1] = "" end
+    out[#out + 1] = "*" .. label .. "*"
+    group = { label = label }
+  end
+  local arg, desc = rest:match("^`([^`]+)`%s*(.*)$")
+  desc = (desc or rest):gsub("^[—–:%-]+%s*", "")
+  group.item = arg ~= nil or desc ~= ""
+  if group.item then out[#out + 1] = "- " .. (arg and ("`" .. arg .. "` ") or "") .. desc end
+  return group
+end
+
+-- Links keep only their text: a concealed URL still counts toward the width, so lines wrapped early.
+function M.tags(lines)
+  local out, group, fence, blank = {}, nil, false, true
+  for _, l in ipairs(lines) do
+    local is_fence = l:match("^%s*```") ~= nil
+    if is_fence then fence = not fence end
+    local name, rest
+    if not fence and not is_fence then
+      l = l:gsub("%[([^%]]-)%]%b()", "%1")
+      name, rest = tag(l)
+    end
+    if name then
+      group = add_tag(out, group, name, rest)
+    elseif group and l:match("^%s*$") then
+      l = ""
+    elseif group and group.item and not is_fence
+      and (not blank or (l:match("^%s*%l") and not out[#out]:match("[.!?:]%s*$"))) then
+      out[#out] = out[#out] .. " " .. vim.trim(l)
+    else
+      if group then out[#out + 1], group = "", nil end
+      out[#out + 1] = l
+    end
+    blank = l:match("^%s*$") ~= nil
+  end
+  return out
+end
+
+function M.doc(lines) return tidy(M.tags(lines)) end
 
 function M.toggle()
   M.enabled = not M.enabled
@@ -254,13 +359,13 @@ function M.toggle()
 end
 
 function M.setup()
+  pcall(keep_fences)
   local group = vim.api.nvim_create_augroup("UiMarkdown", {})
   local au = function(event, fn) vim.api.nvim_create_autocmd(event, { group = group, callback = fn }) end
   vim.api.nvim_create_autocmd("FileType", {
     group = group,
     pattern = "markdown",
     callback = function(ev)
-      pcall(keep_fences)
       vim.keymap.set("n", "<leader>p", M.toggle, { buffer = ev.buf, desc = "Toggle markdown render" })
       schedule(ev.buf)
     end,

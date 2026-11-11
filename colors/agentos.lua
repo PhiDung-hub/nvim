@@ -237,7 +237,6 @@ local hl = {
   AosCmpLabelMatch = { fg = t.cyan, bold = true },
   AosCmpLabelDeprecated = { fg = t.dim, strikethrough = true },
   AosCmpSource = { fg = t.dim, italic = true },
-  AosCmpDocSeparator = { fg = t.faint, bg = t.ground },
   AosCmpSignatureHelpActiveParameter = { fg = t.cyan, bg = t.selection, bold = true },
   AosCmpGhostText = { fg = t.dim, italic = true },
   AosCmpKind = { fg = t.muted },

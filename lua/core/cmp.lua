@@ -117,15 +117,19 @@ local function docs()
   local info = vim.fn.complete_info({ "selected" })
   local win, buf = info.preview_winid, info.preview_bufnr
   if not win or not api.nvim_win_is_valid(win) then return end
-  api.nvim_win_set_config(win, { border = "single", title = " ❯ docs ", title_pos = "left" })
-  api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  for row, line in ipairs(api.nvim_buf_get_lines(buf, 0, -1, false)) do
-    if line:match("^%s*[-*_]%s*[-*_]%s*[-*_][-*_ ]*$") then
-      api.nvim_buf_set_extmark(buf, ns, row - 1, 0, {
-        virt_text = { { ("─"):rep(api.nvim_win_get_width(win)), "AosCmpDocSeparator" } }, virt_text_pos = "overlay",
-      })
-    end
-  end
+  api.nvim_win_set_config(win, { border = vim.split(vim.o.winborder, ","), title = " ❯ docs ", title_pos = "left" })
+  if vim.b[buf].aos_doc == api.nvim_buf_get_changedtick(buf) then return end
+  -- Native completion starts treesitter but sets no filetype, so ui/markdown never rendered this buffer.
+  local md = require("ui.markdown")
+  local modifiable = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
+  api.nvim_buf_set_lines(buf, 0, -1, false, md.doc(api.nvim_buf_get_lines(buf, 0, -1, false)))
+  vim.bo[buf].modifiable = modifiable
+  vim.b[buf].aos_doc = api.nvim_buf_get_changedtick(buf)
+  if vim.bo[buf].filetype ~= "markdown" then vim.bo[buf].filetype = "markdown" end
+  vim.wo[win].conceallevel = 2
+  md.paint_literals(buf)
+  api.nvim_win_set_height(win, math.max(1, api.nvim_win_text_height(win, {}).all))
 end
 
 -- Native convert() is shared by all clients; their identities arrive in user_data afterwards.
@@ -257,9 +261,11 @@ local function signature_result(results, buf, tick, serial)
       lines = vim.iter(ipairs(lines)):filter(function(i, l)
         return not (l:match("^%s*[-*_][-*_%s]*$") and #l:gsub("%s", "") >= 3 and (lines[i - 1] or ""):match("^%s*```%s*$"))
       end):map(function(_, l) return l end):totable()
+      local keep = hl and hl[3] + 1 or 0
+      lines = vim.list_extend(vim.list_slice(lines, 1, keep), require("ui.markdown").tags(vim.list_slice(lines, keep + 1)))
       close_signature()
       local fbuf, win = vim.lsp.util.open_floating_preview(lines, "markdown", {
-        border = "single", title = " ❯ signature ", title_pos = "left", max_width = 80, focusable = false,
+        title = " ❯ signature ", title_pos = "left", max_width = 80, focusable = false,
         close_events = { "InsertLeave", "BufLeave" },
       })
       signature = { win = win, call = call_position() }
@@ -302,7 +308,7 @@ function M.setup(buf)
   vim.keymap.del("i", "<Tab>")
   vim.opt.completeopt = { "menu", "menuone", "noselect", "noinsert", "fuzzy", "popup" }
   vim.o.completeitemalign = "kind,abbr,menu"
-  vim.o.pumborder, vim.o.pummaxwidth = "single", 80
+  vim.o.pumborder, vim.o.pummaxwidth = vim.o.winborder, 80
   vim.o.autocompletedelay = 80
   vim.on_key(function(key)
     -- During collection, native completion consumes Ctrl-N/P before insert mappings.
@@ -316,6 +322,11 @@ function M.setup(buf)
   api.nvim_create_autocmd("LspAttach", { group = group, callback = enable })
   api.nvim_create_autocmd("CompleteChanged", { group = group, callback = function() vim.schedule(preview) end })
   api.nvim_create_autocmd("WinNew", { group = group, callback = function() vim.schedule(docs) end })
+  -- Resolved docs can land after every timer; native completion sets the popup's conceallevel when they do.
+  api.nvim_create_autocmd("OptionSet", {
+    group = group, pattern = "conceallevel",
+    callback = function() if vim.fn.pumvisible() == 1 then vim.schedule(docs) end end,
+  })
   api.nvim_create_autocmd({ "TextChangedI", "TextChangedP", "CursorMovedI" }, { group = group, callback = changed })
   api.nvim_create_autocmd({ "CompleteDone", "InsertLeave", "BufLeave" }, {
     group = group, callback = function(ev) clear_ghost(ev.buf) end,
