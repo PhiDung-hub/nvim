@@ -165,6 +165,12 @@ local function sources(info)
   if info.selected >= 0 then api.nvim_select_popupmenu_item(info.selected, false, false, {}) end
 end
 
+-- The info popup appears only once the item's documentation resolves, so style it again shortly after.
+local function docs_soon()
+  docs()
+  for _, delay in ipairs({ 40, 150, 400 }) do vim.defer_fn(docs, delay) end
+end
+
 local function preview()
   local buf = api.nvim_get_current_buf()
   clear_ghost(buf)
@@ -182,7 +188,7 @@ local function preview()
     local pos = api.nvim_win_get_cursor(0)
     api.nvim_buf_set_extmark(buf, ns, pos[1] - 1, pos[2], { virt_text = { { rest, "AosGhost" } }, virt_text_pos = "inline" })
   end
-  docs()
+  docs_soon()
 end
 
 local function feed(keys) api.nvim_feedkeys(vim.keycode(keys), "ni", false) end
@@ -247,6 +253,10 @@ local function signature_result(results, buf, tick, serial)
       local triggers = client and client.server_capabilities.signatureHelpProvider.triggerCharacters
       local lines, hl = vim.lsp.util.convert_signature_help_to_markdown_lines(result, vim.bo[buf].filetype, triggers)
       if not lines then break end
+      -- A closing fence already draws a rule, so drop the `---` servers put right after it.
+      lines = vim.iter(ipairs(lines)):filter(function(i, l)
+        return not (l:match("^%s*[-*_][-*_%s]*$") and #l:gsub("%s", "") >= 3 and (lines[i - 1] or ""):match("^%s*```%s*$"))
+      end):map(function(_, l) return l end):totable()
       close_signature()
       local fbuf, win = vim.lsp.util.open_floating_preview(lines, "markdown", {
         border = "single", title = " ❯ signature ", title_pos = "left", max_width = 80, focusable = false,
