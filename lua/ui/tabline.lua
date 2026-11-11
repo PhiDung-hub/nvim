@@ -15,13 +15,14 @@ function M.listed()
   return vim.tbl_filter(function(b) return vim.bo[b].buflisted and not blank(b) end, vim.api.nvim_list_bufs())
 end
 
--- Inactive tabs sit on TabLine's surface, so accent colours are re-derived onto that background.
+-- Tabs sit on TabLine's surface or TabLineSel's tinted band, so accent colours are re-derived onto that background.
 local derived = {}
-local function on_surface(group, bold)
-  local name = "AosTab" .. group .. (bold and "Bold" or "")
+local function on_surface(group, base)
+  base = base or "TabLine"
+  local name = "AosTab" .. group .. (base == "TabLine" and "" or "Sel")
   if derived[name] then return name end
-  local bg = vim.api.nvim_get_hl(0, { name = "TabLine", link = false }).bg
-  vim.api.nvim_set_hl(0, name, { fg = vim.api.nvim_get_hl(0, { name = group, link = false }).fg, bg = bg, bold = bold })
+  local bg_hl = vim.api.nvim_get_hl(0, { name = base, link = false })
+  vim.api.nvim_set_hl(0, name, { fg = vim.api.nvim_get_hl(0, { name = group, link = false }).fg, bg = bg_hl.bg, bold = bg_hl.bold })
   derived[name] = true
   return name
 end
@@ -56,8 +57,7 @@ local function buf_label(buf, index, name)
   local current = buf == vim.api.nvim_get_current_buf()
   local base = "%#" .. (current and "TabLineSel" or "TabLine") .. "#"
   local function paint(group, text)
-    if current then return text end
-    return "%#" .. on_surface(group) .. "#" .. text .. base
+    return "%#" .. on_surface(group, current and "TabLineSel") .. "#" .. text .. base
   end
   local mark = require("agent.review").pending(buf) > 0 and g.attention or current and g.reply or g.todo
   local terminal = vim.bo[buf].buftype == "terminal"
@@ -71,8 +71,9 @@ local function buf_label(buf, index, name)
   local counts = vim.diagnostic.count(buf)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
-  if current then label = label .. "  " .. ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol(".")) end
-  local text = ("%s%s%s %d:%s%s"):format(base, PAD, mark, index, label, PAD)
+  if current then label = label .. "  " .. paint("AosSha", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
+  local head = current and paint("AosTabMark", ("%s %d:"):format(mark, index)) or ("%s %d:"):format(mark, index)
+  local text = ("%s%s%s%s%s"):format(base, PAD, head, label, PAD)
   return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), current
 end
 
