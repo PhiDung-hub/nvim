@@ -51,10 +51,12 @@ end
 
 local lock = "\u{f023}"
 
-local PAD = "  "
+local PAD = " "
+local focused = true
 
 local function buf_label(buf, index, name)
-  local current = buf == vim.api.nvim_get_current_buf()
+  local is_current = buf == vim.api.nvim_get_current_buf()
+  local current = is_current and focused
   local base = "%#" .. (current and "TabLineSel" or "TabLine") .. "#"
   local function paint(group, text)
     return "%#" .. on_surface(group, current and "TabLineSel") .. "#" .. text .. base
@@ -71,10 +73,10 @@ local function buf_label(buf, index, name)
   local counts = vim.diagnostic.count(buf)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
-  if current then label = label .. "  " .. paint("AosSha", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
+  if current then label = label .. " " .. paint("AosSha", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
   local head = current and paint("AosTabMark", ("%s %d:"):format(mark, index)) or ("%s %d:"):format(mark, index)
   local text = ("%s%s%s%s%s"):format(base, PAD, head, label, PAD)
-  return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), current
+  return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), is_current
 end
 
 local function tabs(room)
@@ -101,7 +103,7 @@ local function tabs(room)
   local sep = "%#" .. on_surface("AosFaint") .. "#│"
   local out = {}
   for i = first, last do
-    if i > first and i ~= current and i - 1 ~= current then out[#out + 1] = sep end
+    if i > first and (not focused or i ~= current and i - 1 ~= current) then out[#out + 1] = sep end
     out[#out + 1] = parts[i]
   end
   return before .. table.concat(out) .. "%#TabLineFill#" .. after
@@ -178,6 +180,13 @@ vim.api.nvim_create_autocmd("OptionSet", {
   group = group,
   pattern = { "readonly", "modifiable", "fileformat", "fileencoding" },
   callback = function() vim.cmd.redrawtabline() end,
+})
+vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
+  group = group,
+  callback = function(ev)
+    focused = ev.event == "FocusGained"
+    vim.cmd.redrawtabline()
+  end,
 })
 vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = function() derived = {} end })
 
