@@ -38,8 +38,14 @@ end
 local source_hl = { codex = "AosId", ["local"] = "AosDone", copilot = "AosDim" }
 local rank = { copilot = 1, ["local"] = 2, codex = 3 }
 
+-- The completion menu owns the ghost line while it is open: Tab cycles its items and previews the selected one.
+local function menu_open()
+  local cmp = package.loaded["blink.cmp"]
+  return (cmp and cmp.is_menu_visible()) or vim.fn.pumvisible() == 1
+end
+
 local function show(ctx, text, source, item)
-  if not still(ctx) or text == "" then return end
+  if not still(ctx) or text == "" or menu_open() then return end
   if shown and rank[shown.source] > rank[source] then return end
   clear()
   local lines = vim.split(text, "\n", { plain = true })
@@ -397,6 +403,7 @@ end
 function M.setup()
   vim.api.nvim_set_hl(0, "AosGhost", { fg = require("design").dim, italic = true })
   local group = vim.api.nvim_create_augroup("CoreComplete", {})
+  vim.api.nvim_create_autocmd("User", { group = group, pattern = "BlinkCmpMenuOpen", callback = function() clear() end })
   vim.api.nvim_create_autocmd({ "InsertEnter", "TextChangedI", "CursorMovedI" }, { group = group, callback = on_change })
   vim.api.nvim_create_autocmd({ "InsertLeave", "BufLeave" }, {
     group = group,

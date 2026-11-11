@@ -31,8 +31,7 @@ return {
     opts = {
       keymap = {
         preset = "none",
-        ["<Right>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_and_accept() end end, "fallback" },
-        ["<Tab>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_and_accept() end end, "snippet_forward", "fallback" },
+        ["<Tab>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_next() end end, "snippet_forward", "fallback" },
         ["<S-Tab>"] = { function(cmp) if cmp.is_menu_visible() then return cmp.select_prev() end end, "snippet_backward", "fallback" },
         ["<Down>"] = { "select_next", "fallback" },
         ["<Up>"] = { "select_prev", "fallback" },
@@ -74,6 +73,7 @@ return {
         },
         documentation = { auto_show = true, auto_show_delay_ms = 200, draw = draw_docs, window = { border = "single" } },
         list = { selection = { preselect = false, auto_insert = false } },
+        ghost_text = { enabled = true, show_with_selection = true, show_without_selection = false, show_with_menu = true },
       },
       cmdline = {
         keymap = { preset = "cmdline", ["<Right>"] = { "accept", "fallback" } },
