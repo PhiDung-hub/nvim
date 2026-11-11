@@ -110,8 +110,14 @@ local handlers = {
       if kind == "fenced_code_block_delimiter" then fences[#fences + 1] = child end
       if kind == "code_fence_content" then
         local s, _, e, ecol = child:range()
-        for r = math.max(s, ctx.top), math.min(ecol == 0 and e - 1 or e, ctx.bot) do
+        local last = ecol == 0 and e - 1 or e
+        local digits = last > s and #tostring(last - s + 1) or 0
+        ctx.gutter = math.max(ctx.gutter or 0, digits > 0 and digits + 1 or 0)
+        for r = math.max(s, ctx.top), math.min(last, ctx.bot) do
           put(ctx, r, 0, { line_hl_group = "AosMdCode" }, true)
+          if digits > 0 then
+            put(ctx, r, 0, { virt_text = { { ("%" .. digits .. "d "):format(r - s + 1), "LineNr" } }, virt_text_pos = "inline" }, true)
+          end
         end
       end
     end
@@ -195,8 +201,13 @@ local function ranges(buf, wins)
 end
 
 -- LSP floats are sized before rendering; grow one only by the virtual lines that would push rows out.
-local function fit(win)
-  if vim.api.nvim_win_get_config(win).relative == "" then return end
+local function fit(win, gutter)
+  local config = vim.api.nvim_win_get_config(win)
+  if config.relative == "" then return end
+  if gutter and gutter > 0 and not vim.w[win].md_gutter then
+    vim.w[win].md_gutter = true
+    vim.api.nvim_win_set_width(win, math.min(config.width + gutter, vim.o.columns - 4))
+  end
   local size, height = vim.api.nvim_win_text_height(win, {}), vim.api.nvim_win_get_height(win)
   if size.all > height and size.all - size.fill <= height then vim.api.nvim_win_set_height(win, size.all) end
 end
@@ -210,8 +221,12 @@ local function flush()
       local ok, parser = pcall(vim.treesitter.get_parser, buf, "markdown")
       if M.enabled and ok and parser and #wins > 0 and not vim.b[buf].bigfile then
         queries = queries or parse_queries()
-        for _, ctx in ipairs(ranges(buf, wins)) do render(parser, ctx) end
-        for _, win in ipairs(wins) do fit(win) end
+        local gutter = 0
+        for _, ctx in ipairs(ranges(buf, wins)) do
+          render(parser, ctx)
+          gutter = math.max(gutter, ctx.gutter or 0)
+        end
+        for _, win in ipairs(wins) do fit(win, gutter) end
       end
     end
   end

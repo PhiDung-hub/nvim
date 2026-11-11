@@ -143,7 +143,7 @@ Tree: `<CR>`/`l`/`o` open or fold, `h` parent/collapse, `s`/`S` splits, `t` tab,
 
 ## Behaviour notes
 
-- Markdown (`ui/markdown.lua`): headings ❯…, setext too; code blocks with a border, language label and tinted body; bullets · ○ ◆; checkboxes ○ ✓; quotes ▏; rules; pipe tables boxed when aligned (│ overlays only when not). Renders the visible range plus a margin, debounced; the cursor line and the line being edited stay raw; hover floats render too. Skips big files.
+- Markdown (`ui/markdown.lua`): headings ❯…, setext too; code blocks with a border, language label, tinted body and dim line numbers (blocks of 2+ lines; floats widen to fit); bullets · ○ ◆; checkboxes ○ ✓; quotes ▏; rules; pipe tables boxed when aligned (│ overlays only when not). Renders the visible range plus a margin, debounced; the cursor line and the line being edited stay raw; hover floats render too. Skips big files.
 
 - Format-on-save is **off** (conform never had it on). `:Format toggle` turns it on.
 - `autoread` + `config/autocmds.lua` checks the current file every second and on focus. While an agent is attached, every visible buffer is checked every 2 s.
