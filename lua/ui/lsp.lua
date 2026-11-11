@@ -92,12 +92,16 @@ function M.hover()
     end
     lines = tidy(lines)
     if #lines == 0 then return vim.notify("○ no hover information", vim.log.levels.INFO) end
-    local buf = vim.lsp.util.open_floating_preview(lines, "markdown", {
+    local buf, win = vim.lsp.util.open_floating_preview(lines, "markdown", {
       focus_id = "textDocument/hover", max_width = 90, max_height = 25, title = title("hover"), title_pos = "left",
     })
     for i, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
-      if l:match("^─+$") then vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, 0, { line_hl_group = "Whitespace" }) end
+      if l ~= "" and l:gsub("─", "") == "" then
+        vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, 0, { end_col = #l, hl_group = "Whitespace", priority = 250 })
+      end
     end
+    local wh = vim.wo[win].winhighlight
+    vim.wo[win].winhighlight = (wh ~= "" and wh .. "," or "") .. "Search:None,CurSearch:None,IncSearch:None"
   end)
 end
 
