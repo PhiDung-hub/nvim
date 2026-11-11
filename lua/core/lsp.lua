@@ -99,7 +99,7 @@ local function start()
   local glyphs = { [s.ERROR] = "✗", [s.WARN] = "!", [s.INFO] = "●", [s.HINT] = "·" }
   local hls = { [s.ERROR] = "AosFailed", [s.WARN] = "AosRunning", [s.INFO] = "AosId", [s.HINT] = "AosDim" }
   vim.diagnostic.config({
-    underline = true,
+    underline = { severity = { min = vim.diagnostic.severity.WARN } },
     severity_sort = true,
     virtual_text = { spacing = 4, prefix = "" },
     float = {

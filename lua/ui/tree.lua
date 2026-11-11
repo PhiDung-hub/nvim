@@ -137,10 +137,10 @@ local function build(version)
       local match = not S.query or (node and node.name:lower():find(S.query, 1, true))
       if match or item.notice then
         local icon, hl = "", "AosDim"
-        if node then icon, hl = unpack(node.dir and icons.directory or { icons.get_icon(node.name, nil, { default = true }) }) end
+        if node and not node.dir then icon, hl = icons.get_icon(node.name, nil, { default = true }) end
         local guide = item.prefix .. "▏ "
         local lead = guide .. (node and node.dir and (node.expanded and "▾ " or "▸ ") or "")
-        local text = lead .. (node and icon .. " " .. display(node.name) or "○ " .. display(item.notice))
+        local text = lead .. (node and (icon ~= "" and icon .. " " or "") .. display(node.name) or "○ " .. display(item.notice))
         rows[#lines + 1] = { node = node, lead = #lead, guide = #guide, icon = #icon, hl = hl }
         lines[#lines + 1] = text
         if node then index[node.path] = #lines end

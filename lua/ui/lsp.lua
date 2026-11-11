@@ -58,6 +58,24 @@ local function is_rule(l) return l:match("^ ? ? ?[-*_][-*_ ]*$") and select(2, l
 
 -- Servers pad sections with blank lines and stack rules (lua_ls: `---` after a code fence); keep one thin rule
 -- between sections. `***` because `---` under a paragraph line would turn it into a setext heading.
+local literals = { { "%f[%w]0[xXbo]%x+%f[^%w]", "@number" }, { "%f[%w_]%d[%d_]*%.?%d*%f[^%w_]", "@number" },
+  { "%f[%w]true%f[^%w]", "@boolean" }, { "%f[%w]false%f[^%w]", "@boolean" }, { "%f[%w]nil%f[^%w]", "@constant.builtin" },
+  { "%f[%w]null%f[^%w]", "@constant.builtin" }, { "%f[%w]None%f[^%w]", "@constant.builtin" } }
+
+-- Prose outside code fences gets no treesitter colour; paint literal values (sizes, offsets, defaults) like code.
+local function paint_literals(buf)
+  local fence = false
+  for i, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    if l:match("^%s*```") then fence = not fence elseif not fence then
+      for _, lit in ipairs(literals) do
+        for s, e in l:gmatch("()" .. lit[1] .. "()") do
+          vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, s - 1, { end_col = e - 1, hl_group = lit[2], priority = 150 })
+        end
+      end
+    end
+  end
+end
+
 local function tidy(lines)
   local out, fence, closed = {}, false, false
   for _, l in ipairs(lines) do
@@ -71,7 +89,7 @@ local function tidy(lines)
       if #out > 0 and out[#out] ~= "***" and not closed then out[#out + 1] = "***" end
     elseif l ~= "" then
       out[#out + 1], closed = l, false
-    elseif #out > 0 and out[#out] ~= "" and out[#out] ~= "***" then
+    elseif #out > 0 and out[#out] ~= "" and out[#out] ~= "***" and not closed then
       out[#out + 1] = l
     end
   end
@@ -100,6 +118,7 @@ function M.hover()
         vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, 0, { end_col = #l, hl_group = "Whitespace", priority = 250 })
       end
     end
+    paint_literals(buf)
     local wh = vim.wo[win].winhighlight
     vim.wo[win].winhighlight = (wh ~= "" and wh .. "," or "") .. "Search:None,CurSearch:None,IncSearch:None"
   end)
