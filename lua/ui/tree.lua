@@ -1317,14 +1317,13 @@ preview = function()
       if data:find("%z") then data = "○ binary file · open to view" end
       local existing = vim.fn.bufnr(node.path)
       buf = scratch and api.nvim_create_buf(false, true) or existing > 0 and existing or vim.fn.bufadd(node.path)
-      if scratch or not api.nvim_buf_is_loaded(buf) then
+      if scratch then
         api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(data:gsub("\n$", ""), "\n", { plain = true }))
-        vim.bo[buf].modified, vim.bo[buf].buflisted = false, true
-        vim.bo[buf].filetype = #data < 262144 and (vim.filetype.match({ filename = node.path }) or "") or ""
-        if scratch then
-          vim.bo[buf].buftype = "nofile"
-          vim.bo[buf].bufhidden, vim.bo[buf].buflisted = "wipe", false
-        end
+        vim.bo[buf].buftype, vim.bo[buf].bufhidden, vim.bo[buf].buflisted = "nofile", "wipe", false
+      elseif not api.nvim_buf_is_loaded(buf) then
+        -- bufload decodes 'fileencodings'; filling the file's own buffer with raw bytes corrupted non-UTF-8 files on save.
+        vim.fn.bufload(buf)
+        vim.bo[buf].buflisted = true
       end
       show(buf)
     end))
