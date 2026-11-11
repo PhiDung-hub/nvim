@@ -57,8 +57,9 @@ local focused = true
 local function buf_label(buf, index, name)
   local is_current = buf == vim.api.nvim_get_current_buf()
   local current = is_current and focused
-  local base = "%#" .. (current and "TabLineSel" or "TabLine") .. "#"
+  local base = "%#" .. (not focused and (is_current and "AosTabIdleSel" or "AosTabIdle") or current and "TabLineSel" or "TabLine") .. "#"
   local function paint(group, text)
+    if not focused then return text end
     return "%#" .. on_surface(group, current and "TabLineSel") .. "#" .. text .. base
   end
   local mark = require("agent.review").pending(buf) > 0 and g.attention .. " " or ""
@@ -103,7 +104,7 @@ local function tabs(room)
   local sep = "%#" .. on_surface("AosFaint") .. "#│"
   local out = {}
   for i = first, last do
-    if i > first and (not focused or i ~= current and i - 1 ~= current) then out[#out + 1] = sep end
+    if focused and i > first and i ~= current and i - 1 ~= current then out[#out + 1] = sep end
     out[#out + 1] = parts[i]
   end
   return before .. table.concat(out) .. "%#TabLineFill#" .. after

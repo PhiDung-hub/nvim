@@ -59,6 +59,9 @@ local hl = {
   TabLine = { fg = t.cyan, bg = t.surface },
   TabLineSel = { fg = t.text, bg = blend(t.cyan, 0.22), bold = true },
   AosTabMark = { fg = t.cyan, bold = true },
+  -- Unfocused pane: dark and dim, the current tab on a faint band (the artifact tab bar).
+  AosTabIdle = { fg = t.dim },
+  AosTabIdleSel = { fg = t.text, bg = blend(t.muted, 0.07) },
   TabLineFill = {},
   Title = { fg = t.cyan, bold = true },
   Directory = { fg = t.cyan },
