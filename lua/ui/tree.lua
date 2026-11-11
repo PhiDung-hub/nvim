@@ -1324,7 +1324,6 @@ preview = function()
       elseif not api.nvim_buf_is_loaded(buf) then
         -- bufload decodes 'fileencodings'; filling the file's own buffer with raw bytes corrupted non-UTF-8 files on save.
         vim.fn.bufload(buf)
-        vim.bo[buf].buflisted = true
       end
       show(buf)
     end))
