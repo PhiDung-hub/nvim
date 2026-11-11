@@ -17,7 +17,19 @@ map("n", "zl", "<C-w>l", { desc = "Window right" })
 map({ "n", "v" }, "<C-c>", '"+y', { desc = "Copy to clipboard" })
 map("i", "<C-H>", "<C-w>", { desc = "Delete word before cursor" })
 map("i", "<C-Z>", "<C-O>u", { desc = "Undo" })
-map("n", "<C-Z>", "u", { desc = "Undo" })
+local function undo(key)
+  local out = vim.trim(vim.fn.execute("normal! " .. vim.v.count1 .. key))
+  local what, side, seq, ago = out:match("^(.-); (%a+) #(%d+)%s+(.*)$")
+  if not what then return vim.api.nvim_echo({ { out, "AosDim" } }, false, {}) end
+  local tone = what:find("more") and "AosDone" or (what:find("fewer") or what:find("less")) and "AosFailed" or "AosRunning"
+  vim.api.nvim_echo({
+    { key == "u" and "↶ undo  " or "↷ redo  ", "AosArg" }, { what, tone }, { "  ·  ", "AosFaint" },
+    { side .. " ", "AosDim" }, { "#" .. seq, "AosId" }, { "  ·  ", "AosFaint" }, { ago, "AosSha" },
+  }, false, {})
+end
+map("n", "u", function() undo("u") end, { desc = "Undo" })
+map("n", "<C-r>", function() undo("\18") end, { desc = "Redo" })
+map("n", "<C-Z>", function() undo("u") end, { desc = "Undo" })
 map("i", "<C-Y>", "<C-O><C-R>", { desc = "Redo" })
 map("i", "<C-S>", "<Esc><cmd>w<cr>a", { desc = "Save" })
 map("v", "<C-S>", "<Esc><cmd>w<cr>gv", { desc = "Save" })
