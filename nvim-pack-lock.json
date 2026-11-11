@@ -1,0 +1,27 @@
+{
+  "plugins": {
+    "blink.cmp": {
+      "rev": "78336bc89ee5365633bcf754d93df01678b5c08f",
+      "src": "https://github.com/saghen/blink.cmp",
+      "version": "1.0.0 - 2.0.0"
+    },
+    "fff": {
+      "rev": "95fd777c2529fc7b4d7572dabff64cc07268f2c5",
+      "src": "https://github.com/dmtrKovalenko/fff",
+      "version": "'v0.11.0'"
+    },
+    "lean.nvim": {
+      "rev": "108592ebb16d57cbf84d994183327fe643dfa730",
+      "src": "https://github.com/Julian/lean.nvim"
+    },
+    "mason.nvim": {
+      "rev": "2a6940af80375532e5e9e7c1f2fc6319a1b7a69d",
+      "src": "https://github.com/mason-org/mason.nvim"
+    },
+    "nvim-treesitter": {
+      "rev": "19bdfc04f40ed2ccb3340591d125f759b0406875",
+      "src": "https://github.com/nvim-treesitter/nvim-treesitter",
+      "version": "'main'"
+    }
+  }
+}

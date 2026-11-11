@@ -26,7 +26,7 @@ end
 return {
   {
     "saghen/blink.cmp",
-    version = "1.*",
+    version = "1.x",
     event = { "InsertEnter", "CmdlineEnter" },
     opts = {
       keymap = {

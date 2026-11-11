@@ -1,7 +1,7 @@
 vim.loader.enable()
 require("config.test")
 require("config.options")
-require("config.lazy")
+require("config.pack").setup(require("plugins"))
 require("config.autocmds")
 require("ui.tree").setup()
 require("git").setup()
