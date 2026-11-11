@@ -7,6 +7,7 @@ local code, markup, config, shell, meta, plain =
 
 M.file = { "\u{e612}", plain }
 M.directory = { "\u{e5ff}", markup }
+M.directory_open = { "\u{e5fe}", markup }
 
 local git = { "\u{e702}", meta }
 local lock = { "\u{e672}", plain }
