@@ -163,6 +163,8 @@ local hl = {
   AosDim = { fg = t.dim },
   AosFaint = { fg = t.faint },
   AosPrompt = { fg = t.green, bold = true },
+  AosPreviewLine = { link = "Visual" },
+  AosGhost = { fg = t.dim, italic = true },
   AosArg = { fg = t.cyan },
   AosId = { fg = t.blue },
   AosSha = { fg = t.magenta },

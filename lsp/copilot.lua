@@ -23,12 +23,15 @@ local function sign_in(client, buf)
   end)
 end
 
+-- `vim.version()` builds the whole API description (1.4 ms a call); the banner is 30x cheaper.
+local version = vim.fn.execute("version"):match("NVIM v(%S+)") or "0"
+
 ---@type vim.lsp.Config
 return {
   cmd = { "copilot-language-server", "--stdio" },
   init_options = {
-    editorInfo = { name = "Neovim", version = tostring(vim.version()) },
-    editorPluginInfo = { name = "Neovim", version = tostring(vim.version()) },
+    editorInfo = { name = "Neovim", version = version },
+    editorPluginInfo = { name = "Neovim", version = version },
   },
   settings = { telemetry = { telemetryLevel = "off" } },
   on_attach = function(client, buf)

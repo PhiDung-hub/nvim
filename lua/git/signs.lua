@@ -155,8 +155,16 @@ local function place(buf, hunks, conflict)
     for l = math.min(first, last), math.min(final, last) do rows[l] = "%#" .. kind .. "#" .. text .. "%*" end
   end
   if conflict then mark_conflicts(buf, rows) end
+  local before, first, final = gutter[buf] or {}, nil, nil
   gutter[buf] = rows
-  pcall(api.nvim__redraw, { buf = buf, statuscolumn = true })
+  for _, pair in ipairs({ { rows, before }, { before, rows } }) do
+    for l, text in pairs(pair[1]) do
+      if pair[2][l] ~= text then first, final = math.min(first or l, l), math.max(final or l, l) end
+    end
+  end
+  -- Only the lines whose mark changed, at the next redraw: `statuscolumn = true` repaints the whole window at once
+  -- (9-20 ms with treesitter and semantic tokens).
+  if first then pcall(api.nvim__redraw, { buf = buf, range = { first - 1, final }, flush = false }) end
 end
 
 function M.column()
@@ -931,7 +939,9 @@ function M.setup()
   local au = function(ev, cb, opts) api.nvim_create_autocmd(ev, vim.tbl_extend("force", { group = group, callback = cb }, opts or {})) end
   au({ "BufReadPost", "BufWritePost", "FileChangedShellPost" }, function(ev)
     vim.b[ev.buf].git_written = ev.event == "BufWritePost" or nil
-    M.reload(ev.buf)
+    -- While starting, the git lookups (a process each) wait for the first paint.
+    if vim.v.vim_did_enter == 1 then return M.reload(ev.buf) end
+    vim.schedule(function() if api.nvim_buf_is_valid(ev.buf) then M.reload(ev.buf) end end)
   end)
   au({ "TextChanged", "InsertLeave" }, debounced)
   au({ "BufWritePost", "FocusGained", "DirChanged", "ShellCmdPost" }, refresh_cwd)

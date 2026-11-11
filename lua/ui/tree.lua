@@ -151,7 +151,7 @@ local function build(version)
   local rows, lines, index, stack = {}, {}, {}, {}
   local deadline = uv.hrtime() + BUDGET * 1000000
   local root = S.nodes[S.root]
-  local title = " ❯ " .. display(S.root) .. " "
+  local title = " ❯ " .. display(vim.fn.fnamemodify(S.root, ":~")) .. " "
   rows[1], lines[1], index[S.root] = { node = root, header = true }, title, 1
   if S.query then rows[2], lines[2] = {}, " filter: " .. display(S.query) .. " · Esc clears " end
   if root.expanded or S.query then push(stack, root, " ") end

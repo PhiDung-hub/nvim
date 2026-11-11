@@ -318,10 +318,11 @@ function M.winbar()
   return table.concat(out)
 end
 
-local function set_winbar(win)
+-- Every file window carries the path; symbols join it once a server answers documentSymbol.
+function M.set_winbar(win)
   if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_config(win).relative ~= "" then return end
   local buf = vim.api.nvim_win_get_buf(win)
-  local wanted = vim.bo[buf].buftype == "" and client_for(buf, "textDocument/documentSymbol") ~= nil
+  local wanted = vim.bo[buf].buftype == "" and vim.api.nvim_buf_get_name(buf) ~= ""
   if wanted then
     vim.wo[win].winbar = WINBAR
   elseif vim.wo[win].winbar == WINBAR then
@@ -489,20 +490,15 @@ function M.attach(buf, client)
   map("<leader>li", function() M.calls("incoming") end, "Incoming calls")
   map("<leader>lo", function() M.calls("outgoing") end, "Outgoing calls")
   require("ui.fix").attach(buf)
-  if client:supports_method("textDocument/documentSymbol") then
-    fetch(buf)
-    for _, win in ipairs(vim.fn.win_findbuf(buf)) do set_winbar(win) end
-  end
+  if client:supports_method("textDocument/documentSymbol") then fetch(buf) end
 end
 
 function M.setup()
   vim.ui.select = pick.select
-  vim.api.nvim_set_hl(0, "AosPreviewLine", { link = "Visual", default = true })
   vim.keymap.set("n", "<leader>i", M.inspect, { desc = "Inspect under cursor" })
   vim.keymap.set("n", "<leader>I", M.tree, { desc = "Syntax tree" })
 
   local group = vim.api.nvim_create_augroup("UiLsp", {})
-  vim.api.nvim_create_autocmd("BufWinEnter", { group = group, callback = function() set_winbar(vim.api.nvim_get_current_win()) end })
   vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave", "BufWritePost" }, {
     group = group,
     callback = function(ev)

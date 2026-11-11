@@ -86,7 +86,13 @@ function M.setup()
   vim.api.nvim_create_autocmd({ "BufWinEnter", "WinScrolled", "TextChanged", "InsertLeave" }, {
     group = vim.api.nvim_create_augroup("CoreHex", {}),
     callback = function(ev)
-      if hex_fts[vim.bo[ev.buf].filetype] and not vim.b[ev.buf].bigfile then paint_hex(ev.buf, vim.api.nvim_get_current_win()) end
+      if not hex_fts[vim.bo[ev.buf].filetype] or vim.b[ev.buf].bigfile then return end
+      -- While starting, wait for the first paint: asking for the visible range forces the fold and parse work early.
+      if vim.v.vim_did_enter == 1 then return paint_hex(ev.buf, vim.api.nvim_get_current_win()) end
+      vim.schedule(function()
+        local win = vim.fn.bufwinid(ev.buf)
+        if win ~= -1 then paint_hex(ev.buf, win) end
+      end)
     end,
   })
   hex_groups = {}

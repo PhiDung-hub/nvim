@@ -32,9 +32,15 @@ local function tail(path, depth)
   return table.concat(parts, "/", math.max(1, #parts - depth))
 end
 
--- File names, widened with parent directories until no two tabs share one.
+-- File names, widened with parent directories until no two tabs share one. Recomputed only when the set changes.
+local names_key, names_cache
 local function unique_names(bufs)
+  local paths = {}
+  for i, b in ipairs(bufs) do paths[i] = b .. ":" .. vim.api.nvim_buf_get_name(b) end
+  local key = table.concat(paths, "\0")
+  if key == names_key then return names_cache end
   local depth, names = {}, {}
+  names_key, names_cache = key, names
   for _ = 0, 3 do
     local count, clash = {}, false
     for _, b in ipairs(bufs) do
@@ -51,13 +57,31 @@ end
 
 local lock = "\u{f023}"
 
+-- The file the bar describes: the current buffer, or the last one that was a file while a tree, picker or popup has
+-- focus (their buffers are unlisted scratch ones with internal filetypes).
+local subject = {}
+local function describes(buf)
+  local bt = vim.bo[buf].buftype
+  return bt == "" or bt == "help" or vim.bo[buf].buflisted
+end
+local function subject_now()
+  local buf = vim.api.nvim_get_current_buf()
+  if describes(buf) or not (subject.buf and vim.api.nvim_buf_is_valid(subject.buf)) then
+    subject.buf, subject.win, subject.live = buf, vim.api.nvim_get_current_win(), true
+  else
+    subject.live = false
+  end
+  return subject
+end
+
 local PAD = " "
 local focused = true
 
-local function buf_label(buf, index, name)
-  local is_current = buf == vim.api.nvim_get_current_buf()
-  local current = is_current and focused
-  local base = "%#" .. (not focused and (is_current and "AosTabIdleSel" or "AosTabIdle") or current and "TabLineSel" or "TabLine") .. "#"
+-- A tab without its cursor position, so moving the cursor rebuilds nothing.
+local function buf_label(buf, index, name, is_current)
+  local current = is_current and focused and subject.live
+  local base = "%#" .. (not focused and (is_current and "AosTabIdleSel" or "AosTabIdle")
+    or current and "TabLineSel" or is_current and "AosTabIdleSel" or "TabLine") .. "#"
   -- Other tabs stay dim; only the modified mark and diagnostics keep their colour there.
   local function paint(group, text, keep)
     if not focused or not (current or keep) then return text end
@@ -75,21 +99,37 @@ local function buf_label(buf, index, name)
   local counts = vim.diagnostic.count(buf)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1], true) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2], true) end
-  if current then label = label .. " " .. paint("AosSha", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
   local head = (current and "%#AosTabMark#● " .. base or "") .. ("%s%d:"):format(mark, index)
-  local text = ("%s%s%s%s%s"):format(base, PAD, head, label, PAD)
-  return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), is_current
+  return ("%%%d@v:lua.AosTabClick@%s%s%s%s"):format(buf, base, PAD, head, label)
+end
+
+-- Labels and their widths are kept per buffer until something they show changes (measuring one costs more than
+-- building it); the render runs on every cursor move.
+local cache = {}
+local function tab(buf, index, name, is_current)
+  local bo, counts = vim.bo[buf], vim.diagnostic.count(buf)
+  local key = table.concat({
+    index, name, is_current and (subject.live and 2 or 1) or 0, focused and 1 or 0, bo.modified and 1 or 0, (bo.readonly or not bo.modifiable) and 1 or 0,
+    bo.buftype, counts[1] or 0, counts[2] or 0, require("agent.review").pending(buf),
+  }, "\1")
+  local c = cache[buf]
+  if not c or c.key ~= key then
+    local text = buf_label(buf, index, name, is_current)
+    c = { key = key, text = text, width = vim.api.nvim_eval_statusline(text .. PAD, { use_tabline = true }).width }
+    cache[buf] = c
+  end
+  if not (is_current and focused and subject.live) then return c.text .. PAD .. "%X", c.width end
+  local pos = ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))
+  return ("%s %%#%s#%s%%#TabLineSel#%s%%X"):format(c.text, on_surface("AosSha", "TabLineSel"), pos, PAD), c.width + 1 + #pos
 end
 
 local function tabs(room)
   local parts, widths, current = {}, {}, 1
-  local bufs = M.listed()
+  local bufs, here = M.listed(), subject.buf
   local names = unique_names(bufs)
   for i, buf in ipairs(bufs) do
-    local text, is_current = buf_label(buf, i, names[buf])
-    parts[#parts + 1] = text
-    widths[#widths + 1] = vim.api.nvim_eval_statusline(text, { use_tabline = true }).width
-    if is_current then current = i end
+    parts[i], widths[i] = tab(buf, i, names[buf], buf == here)
+    if buf == here then current = i end
   end
   if #parts == 0 then return "" end
   room = room - 8 -- keep space for the ‹n / n› overflow markers
@@ -109,8 +149,8 @@ local modes = { i = "insert", v = "visual", V = "v-line", ["\22"] = "v-block", R
 
 local function segment(hl, text) return ("%%#%s# %s %%#TabLineFill# "):format(hl, esc(text)) end
 
-local function diagnostics()
-  local counts = vim.diagnostic.count(0)
+local function diagnostics(buf)
+  local counts = vim.diagnostic.count(buf)
   local out = ""
   if (counts[1] or 0) > 0 then out = out .. ("%%#AosFailed#%s %d "):format(g.failed, counts[1]) end
   if (counts[2] or 0) > 0 then out = out .. ("%%#AosRunning#%s %d "):format(g.attention, counts[2]) end
@@ -118,36 +158,47 @@ local function diagnostics()
 end
 
 -- Current file: filetype icon and name, attached language servers, and any non-default encoding/format.
-local function file_info()
-  local ft = vim.bo.filetype
+local function file_info(buf)
+  local bo = vim.bo[buf]
+  local ft = bo.filetype
   if ft == "" then return "" end
   local icon, hl = icons.get_icon_by_filetype(ft, { default = true })
-  local clients = vim.tbl_map(function(c) return c.name end, vim.lsp.get_clients({ bufnr = 0 }))
+  local clients = vim.tbl_map(function(c) return c.name end, vim.lsp.get_clients({ bufnr = buf }))
   clients = vim.tbl_filter(function(n) return n ~= "copilot" end, clients)
   local out = ("%%#%s#%s %%#AosDim#%s"):format(hl, icon, esc(ft))
   if #clients > 0 then out = out .. "%#AosFaint# · %#AosId#" .. esc(table.concat(clients, ",")) end
-  if vim.b.lsp_off then out = out .. "%#AosFaint# · lsp off" end
-  local enc = vim.bo.fileencoding
-  if (enc ~= "" and enc ~= "utf-8") or vim.bo.fileformat ~= "unix" then
-    out = out .. "%#AosFaint# · %#AosRunning#" .. esc(enc) .. (vim.bo.fileformat ~= "unix" and " " .. vim.bo.fileformat or "")
+  if vim.b[buf].lsp_off then out = out .. "%#AosFaint# · lsp off" end
+  local enc = bo.fileencoding
+  if (enc ~= "" and enc ~= "utf-8") or bo.fileformat ~= "unix" then
+    out = out .. "%#AosFaint# · %#AosRunning#" .. esc(enc) .. (bo.fileformat ~= "unix" and " " .. bo.fileformat or "")
   end
   return out .. " "
 end
+
+local status_key, status_width
 
 function M.render()
   local right = {}
   local mode = modes[vim.fn.mode():sub(1, 1)]
   if mode then right[#right + 1] = segment("AosSegYellow", mode) end
-  right[#right + 1] = file_info()
-  right[#right + 1] = diagnostics()
+  local sub = subject_now()
+  local file = describes(sub.buf)
+  if file then
+    right[#right + 1] = file_info(sub.buf)
+    right[#right + 1] = diagnostics(sub.buf)
+  end
   local ai = require("core.complete").segment()
   if ai then right[#right + 1] = segment(ai.hl, ai.text) end
   for _, seg in ipairs(require("agent").segments()) do right[#right + 1] = segment(seg.hl, seg.text) end
   local branch = require("git.signs").status_text()
   if branch then right[#right + 1] = "%@v:lua.AosGitBranchClick@" .. segment("AosSegBlue", branch) .. "%X" end
-  right[#right + 1] = segment("AosSegMagenta", ("%dL %d%%"):format(vim.fn.line("$"), math.floor(vim.fn.line(".") * 100 / vim.fn.line("$"))))
+  if file and vim.api.nvim_win_is_valid(sub.win) and vim.api.nvim_win_get_buf(sub.win) == sub.buf then
+    local total = vim.api.nvim_buf_line_count(sub.buf)
+    right[#right + 1] = segment("AosSegMagenta", ("%dL %d%%"):format(total, math.floor(vim.api.nvim_win_get_cursor(sub.win)[1] * 100 / total)))
+  end
   local status = table.concat(right)
-  local room = vim.o.columns - vim.api.nvim_eval_statusline(status, { use_tabline = true }).width - 2
+  if status ~= status_key then status_key, status_width = status, vim.api.nvim_eval_statusline(status, { use_tabline = true }).width end
+  local room = vim.o.columns - status_width - 2
   return "%#TabLineFill# " .. tabs(room) .. "%#TabLineFill#%=" .. status
 end
 
@@ -170,8 +221,10 @@ vim.o.tabline = "%!v:lua.require'ui.tabline'.render()"
 local group = vim.api.nvim_create_augroup("AosTabline", {})
 vim.api.nvim_create_autocmd({ "ModeChanged", "DiagnosticChanged", "BufModifiedSet", "LspAttach", "LspDetach", "FileType", "CursorMoved", "CursorMovedI" }, {
   group = group,
-  callback = function() vim.cmd.redrawtabline() end,
+  -- Not while starting: the first paint draws it anyway.
+  callback = function() if vim.v.vim_did_enter == 1 then vim.cmd.redrawtabline() end end,
 })
+vim.api.nvim_create_autocmd("BufWipeout", { group = group, callback = function(ev) cache[ev.buf] = nil end })
 vim.api.nvim_create_autocmd("OptionSet", {
   group = group,
   pattern = { "readonly", "modifiable", "fileformat", "fileencoding" },
@@ -193,6 +246,6 @@ vim.on_key(function(_, typed)
   focused = true
   vim.schedule(vim.cmd.redrawtabline)
 end, vim.api.nvim_create_namespace("ui.tabline.focus"))
-vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = function() derived = {} end })
+vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = function() derived, cache = {}, {} end })
 
 return M

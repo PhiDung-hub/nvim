@@ -72,7 +72,7 @@ local function render()
   if not (buf and api.nvim_buf_is_valid(buf)) then return end
   local lines, marks = {}, {}
   local installed = #vim.tbl_filter(version, TOOLS)
-  lines[1] = (" %d tools · %d installed · %s"):format(#TOOLS, installed, bindir)
+  lines[1] = (" %d tools · %d installed · %s"):format(#TOOLS, installed, vim.fn.fnamemodify(bindir, ":~"))
   lines[2] = " i install · u update · U update all · x remove · q close"
   lines[3], rows = "", {}
   for _, t in ipairs(TOOLS) do
@@ -81,8 +81,8 @@ local function render()
     local text = ("  %s %-28s %-14s %s"):format(glyph, t[1], state or v or "missing", source(t))
     lines[#lines + 1], rows[#lines + 1] = text, t
     marks[#marks + 1] = { #lines - 1, 2, 2 + #glyph, hl }
-    marks[#marks + 1] = { #lines - 1, 33 + #glyph, 47 + #glyph, state and "AosRunning" or v and "AosSha" or "AosDim" }
-    marks[#marks + 1] = { #lines - 1, 48 + #glyph, #text, "AosDim" }
+    marks[#marks + 1] = { #lines - 1, 32 + #glyph, 46 + #glyph, state and "AosRunning" or v and "AosSha" or "AosDim" }
+    marks[#marks + 1] = { #lines - 1, 47 + #glyph, #text, "AosDim" }
   end
   vim.bo[buf].modifiable = true
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)

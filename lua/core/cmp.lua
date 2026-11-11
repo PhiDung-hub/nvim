@@ -20,9 +20,14 @@ local function before_cursor()
   return api.nvim_get_current_line():sub(1, api.nvim_win_get_cursor(0)[2])
 end
 
+-- One long label widens the menu to 'pummaxwidth' and cuts every source tag to `l>`, so labels are capped.
+local function short(label)
+  return vim.fn.strchars(label) > 48 and vim.fn.strcharpart(label, 0, 47) .. "…" or label
+end
+
 local function item(word, kind, source)
   return {
-    word = word, abbr = word, kind = kind_icons[kind], kind_hlgroup = "AosCmpKind" .. kind,
+    word = word, abbr = short(word), kind = kind_icons[kind], kind_hlgroup = "AosCmpKind" .. kind,
     menu = source, dup = 1, user_data = { aos_start = startcol },
   }
 end
@@ -100,7 +105,8 @@ end
 
 local function convert(entry)
   local kind = vim.lsp.protocol.CompletionItemKind[entry.kind] or "Text"
-  return { kind = kind_icons[kind] or "¶", kind_hlgroup = "AosCmpKind" .. kind, menu = "" }
+  local label = entry.label .. (vim.tbl_get(entry, "labelDetails", "detail") or "")
+  return { abbr = short(label), kind = kind_icons[kind] or "¶", kind_hlgroup = "AosCmpKind" .. kind, menu = "" }
 end
 
 local function enable(ev)

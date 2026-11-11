@@ -3,7 +3,6 @@ local markers = {
   "postcss.config.js", "postcss.config.cjs", "postcss.config.mjs", "postcss.config.ts",
   "theme/static_src/tailwind.config.js", "theme/static_src/tailwind.config.cjs",
   "theme/static_src/tailwind.config.mjs", "theme/static_src/tailwind.config.ts", "theme/static_src/postcss.config.js",
-  ".git",
 }
 -- Manifests that mark a root only when they mention Tailwind (v4 needs no tailwind.config.*).
 local manifests = { { { "package.json", "package.json5" }, "tailwindcss" }, { { "mix.lock", "Gemfile.lock" }, "tailwind" } }
@@ -61,6 +60,9 @@ return {
       local file = vim.fs.find(m[1], { path = vim.fs.dirname(fname), upward = true, type = "file" })[1]
       if file and mentions(file, m[2]) then found[#found + 1] = vim.fs.basename(file) end
     end
-    on_dir(vim.fs.dirname(vim.fs.find(found, { path = fname, upward = true })[1]))
+    -- No Tailwind marker, no server: a bare git repo no longer counts (it started a Node server for every
+    -- markdown, JS or CSS file anywhere).
+    local marker = vim.fs.find(found, { path = fname, upward = true })[1]
+    if marker then on_dir(vim.fs.dirname(marker)) end
   end,
 }

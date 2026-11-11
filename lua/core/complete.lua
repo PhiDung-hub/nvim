@@ -113,9 +113,14 @@ local function llm_paths()
   return vim.g.complete_local_bin or LLAMA .. "/bin/llama-server", vim.g.complete_local_model or LLAMA .. "/qwen2.5-coder-0.5b-q8_0.gguf"
 end
 
+-- Asked on every tabline render, so the answer is kept for 5 s.
+local checked, found
 local function llm_installed()
+  local now = vim.uv.now()
+  if checked and now - checked < 5000 then return found end
   local bin, model_path = llm_paths()
-  return vim.fn.executable(bin) == 1 and vim.uv.fs_stat(model_path) ~= nil
+  checked, found = now, vim.fn.executable(bin) == 1 and vim.uv.fs_stat(model_path) ~= nil
+  return found
 end
 
 -- A second nvim's server fails to bind and exits; requests then reach the first one.
@@ -400,7 +405,6 @@ function M.segment()
 end
 
 function M.setup()
-  vim.api.nvim_set_hl(0, "AosGhost", { fg = require("design").dim, italic = true })
   local group = vim.api.nvim_create_augroup("CoreComplete", {})
   vim.api.nvim_create_autocmd("CompleteChanged", { group = group, callback = function() if menu_open() then clear() end end })
   vim.api.nvim_create_autocmd({ "InsertEnter", "TextChangedI", "CursorMovedI" }, { group = group, callback = on_change })

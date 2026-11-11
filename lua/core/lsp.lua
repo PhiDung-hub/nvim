@@ -87,12 +87,10 @@ local function start()
     return lsp_start(config, opts)
   end
   local test = require("config.test")
-  if test.allows("lsp") then
-    vim.lsp.enable(vim.tbl_filter(function(n) return n ~= "copilot" or test.allows("copilot") end, servers))
-  end
+  local names = test.allows("lsp") and vim.list_slice(servers) or {}
   for name, bin in pairs(extras) do
     local want = name == "copilot" and test.allows("copilot") or name ~= "copilot" and test.allows("lsp")
-    if want and vim.fn.executable(bin) == 1 then vim.lsp.enable(name) end
+    if want and vim.fn.executable(bin) == 1 then names[#names + 1] = name end
   end
   vim.api.nvim_create_autocmd("LspAttach", { group = vim.api.nvim_create_augroup("CoreLsp", {}), callback = on_attach })
 
@@ -117,11 +115,26 @@ local function start()
   })
   require("ui.lsp").setup()
   require("ui.fix").setup()
+  -- One call: after startup every `vim.lsp.enable` re-runs the attach check on all open buffers.
+  vim.lsp.enable(names)
 end
 
--- Deferred to the first file read or created, so starting nvim without a file does no LSP work.
+-- Deferred to the first file read or created, and then past the first paint: resolving the configs and spawning the
+-- servers costs 25-40 ms, and `vim.lsp.enable` attaches to buffers that are already open.
 function M.setup()
-  vim.api.nvim_create_autocmd({ "BufReadPre", "BufNewFile" }, { once = true, callback = start })
+  vim.api.nvim_create_autocmd({ "BufReadPre", "BufNewFile" }, {
+    once = true,
+    callback = function()
+      if vim.v.vim_did_enter == 1 then return vim.schedule(start) end
+      -- Never before VimEnter (a `-c` command or session can run the event loop early): `enable` only attaches
+      -- to open buffers once startup is over.
+      vim.api.nvim_create_autocmd("VimEnter", { once = true, callback = function() vim.schedule(start) end })
+    end,
+  })
+  -- The path bar is there from the first paint, so a server attaching never shifts the text down a line.
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    callback = function() require("ui.lsp").set_winbar(vim.api.nvim_get_current_win()) end,
+  })
 end
 
 return M
