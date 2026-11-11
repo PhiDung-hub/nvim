@@ -4,7 +4,7 @@ Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `confi
 
 ## Design
 
-One look with WezTerm/Agent OS. The guideline lives in `~/.config/wezterm/DESIGN.md`, and that file wins. `lua/design.lua` is its token block copied verbatim; `colors/wezterm.lua` (`:colorscheme wezterm`) paints from it.
+One look with WezTerm and WAT. The guideline lives in `~/.config/wezterm/DESIGN.md`, and that file wins. `lua/design.lua` is its token block copied verbatim; `colors/wat.lua` (`:colorscheme wat`) paints from it.
 - The chrome follows the state colours: green done/running, yellow attention/waiting, blue ids/Codex, magenta shas/times/Claude, cyan args/paths/active tab, red failed, dim for idle or unknown. Code uses Tokyo Night syntax hues.
 - Square borders drawn on the cells' outer edge with one-eighth blocks (`winborder`/`pumborder` = `🭽▔🭾▕🭿▁🭼▏`), because `single` lines sit mid-cell and leave half a cell of `ground` outside them; titles sit just under the top line, and touching panes share one `▕▏` divider. Code passes `vim.o.winborder` (a list) or nothing, never `"single"`. Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `.
 - Rows read `glyph · id · text`, using the glyphs ✓ ◆ ○ ● ✗ ! ? ❯ ⎿ ▸ ▾.
@@ -15,7 +15,7 @@ One look with WezTerm/Agent OS. The guideline lives in `~/.config/wezterm/DESIGN
 
 ```
 init.lua                 options → pack → autocmds → core → tabline → keymaps → agent
-colors/wezterm.lua       colorscheme from lua/design.lua
+colors/wat.lua           colorscheme from lua/design.lua
 lua/design.lua           Agent OS tokens (verbatim from DESIGN.md)
 lua/plugins.lua          the only plugin spec (lazy.nvim-style tables)
 lua/config/              options, pack (vim.pack + lazy loading), autocmds (reload, bigfile, sessions, indent guides), keymaps, commands
@@ -65,7 +65,7 @@ External tools: language servers and formatters installed by `:Tools` into `~/.l
 | 5 ✓ done | blink.cmp | `core/cmp.lua`: native `vim.lsp.completion`, capped buffer/path sources, docs/signatures; cmdline list in `ui/cmdline` | large | native fuzzy matching and snippets |
 | — | nvim-treesitter, lean.nvim | keep | — | queries/parser builds and the Lean infoview are too large to own |
 
-Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons`; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/wezterm`; codecompanion → `lua/agent` + `core/complete`; mason → `ui/tools`; blink.cmp → native completion + `core/cmp` + `ui/cmdline`; fff → `ui/pick` files/grep.
+Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons`; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/wat`; codecompanion → `lua/agent` + `core/complete`; mason → `ui/tools`; blink.cmp → native completion + `core/cmp` + `ui/cmdline`; fff → `ui/pick` files/grep.
 
 Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
 

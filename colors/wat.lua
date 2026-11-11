@@ -1,4 +1,4 @@
--- WezTerm colorscheme: chrome follows DESIGN.md state colours; code uses Tokyo Night syntax hues.
+-- WAT colorscheme: chrome follows DESIGN.md state colours; code uses Tokyo Night syntax hues.
 local t = require("design")
 local syntax = { orange = "#ff9e64", teal = "#73daca", operator = "#89ddff", type = "#2ac3de" }
 
@@ -15,7 +15,7 @@ local tab_bar, tab_band = "#161619", "#25262c"
 
 vim.cmd("hi clear")
 vim.o.background = "dark"
-vim.g.colors_name = "wezterm"
+vim.g.colors_name = "wat"
 
 local hl = {
   -- Content leaves the background to WezTerm, so its wallpaper shows; floats keep `ground` (DESIGN.md).
