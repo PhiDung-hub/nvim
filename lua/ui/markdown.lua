@@ -57,9 +57,9 @@ local function rule(cols, s, e, l, m, r)
 end
 
 local function fence(ctx, row, col, lang)
-  local chunks = lang ~= "" and { { "─ ", "AosBorder" }, { lang, "AosDim" }, { " ", "AosBorder" } } or {}
+  local chunks = lang ~= "" and { { "─ ", "Whitespace" }, { lang, "AosDim" }, { " ", "Whitespace" } } or {}
   local used = lang ~= "" and vim.fn.strdisplaywidth(lang) + 3 or 0
-  chunks[#chunks + 1] = { ("─"):rep(math.max(ctx.width - col - used, 0)), "AosBorder" }
+  chunks[#chunks + 1] = { ("─"):rep(math.max(ctx.width - col - used, 0)), "Whitespace" }
   put(ctx, row, col, { virt_text = chunks, virt_text_pos = "overlay" })
 end
 
@@ -100,7 +100,7 @@ local handlers = {
   end,
   rule = function(ctx, node)
     local row, col = node:start()
-    overlay(ctx, row, col, ("─"):rep(ctx.width - col), "AosFaint")
+    overlay(ctx, row, col, ("─"):rep(ctx.width - col), "Whitespace")
   end,
   code = function(ctx, node)
     local lang, fences = "", {}

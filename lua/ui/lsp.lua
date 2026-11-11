@@ -53,7 +53,53 @@ end
 
 -- Hover and peek -----------------------------------------------------------------------------
 
-function M.hover() vim.lsp.buf.hover({ max_width = 90, max_height = 25, title = title("hover"), title_pos = "left" }) end
+local hover_ns = vim.api.nvim_create_namespace("aos.hover")
+local function is_rule(l) return l:match("^ ? ? ?[-*_][-*_ ]*$") and select(2, l:gsub("[-*_]", "")) >= 3 end
+
+-- Servers pad sections with blank lines and stack rules (lua_ls: `---` after a code fence); keep one thin rule
+-- between sections. `***` because `---` under a paragraph line would turn it into a setext heading.
+local function tidy(lines)
+  local out, fence, closed = {}, false, false
+  for _, l in ipairs(lines) do
+    local is_fence = l:match("^%s*```") ~= nil
+    if fence or is_fence then
+      out[#out + 1] = l
+      if is_fence then fence = not fence end
+      closed = not fence
+    elseif is_rule(l) then
+      while out[#out] == "" do out[#out] = nil end
+      if #out > 0 and out[#out] ~= "***" and not closed then out[#out + 1] = "***" end
+    elseif l ~= "" then
+      out[#out + 1], closed = l, false
+    elseif #out > 0 and out[#out] ~= "" and out[#out] ~= "***" then
+      out[#out + 1] = l
+    end
+  end
+  while out[#out] == "" or out[#out] == "***" do out[#out] = nil end
+  return vim.tbl_map(function(l) return " " .. l end, out)
+end
+
+function M.hover()
+  local params = function(client) return vim.lsp.util.make_position_params(0, client.offset_encoding) end
+  vim.lsp.buf_request_all(0, "textDocument/hover", params, function(results)
+    local lines = {}
+    for _, r in pairs(results) do
+      local contents = r.result and r.result.contents
+      if contents then
+        if #lines > 0 then lines[#lines + 1] = "***" end
+        vim.list_extend(lines, vim.lsp.util.convert_input_to_markdown_lines(contents))
+      end
+    end
+    lines = tidy(lines)
+    if #lines == 0 then return vim.notify("○ no hover information", vim.log.levels.INFO) end
+    local buf = vim.lsp.util.open_floating_preview(lines, "markdown", {
+      focus_id = "textDocument/hover", max_width = 90, max_height = 25, title = title("hover"), title_pos = "left",
+    })
+    for i, l in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+      if l:match("^─+$") then vim.api.nvim_buf_set_extmark(buf, hover_ns, i - 1, 0, { line_hl_group = "Whitespace" }) end
+    end
+  end)
+end
 
 -- Editable float on the definition; <CR> opens it in the origin window, q closes.
 function M.peek()

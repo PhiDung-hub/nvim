@@ -61,7 +61,7 @@ local function buf_label(buf, index, name)
   local function paint(group, text)
     return "%#" .. on_surface(group, current and "TabLineSel") .. "#" .. text .. base
   end
-  local mark = require("agent.review").pending(buf) > 0 and g.attention or current and g.reply or g.todo
+  local mark = require("agent.review").pending(buf) > 0 and g.attention .. " " or ""
   local terminal = vim.bo[buf].buftype == "terminal"
   local icon, icon_hl = icons.get_icon(terminal and "terminal" or name:match("[^/]*$"), nil, { default = true })
   if name == "" then name = "[No Name]" end
@@ -74,7 +74,7 @@ local function buf_label(buf, index, name)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1]) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2]) end
   if current then label = label .. " " .. paint("AosSha", ("%d:%d"):format(vim.fn.line("."), vim.fn.charcol("."))) end
-  local head = current and paint("AosTabMark", ("%s %d:"):format(mark, index)) or ("%s %d:"):format(mark, index)
+  local head = current and paint("AosTabMark", ("%s%d:"):format(mark, index)) or ("%s%d:"):format(mark, index)
   local text = ("%s%s%s%s%s"):format(base, PAD, head, label, PAD)
   return ("%%%d@v:lua.AosTabClick@%s%%X"):format(buf, text), is_current
 end
