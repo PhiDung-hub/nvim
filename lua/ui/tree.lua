@@ -138,14 +138,14 @@ local function build(version)
       if match or item.notice then
         local icon, hl = "", "AosDim"
         if node then icon, hl = unpack(node.dir and icons.directory or { icons.get_icon(node.name, nil, { default = true }) }) end
-        local guide = item.prefix .. (item.last and "└ " or "│ ")
+        local guide = item.prefix .. "▏ "
         local lead = guide .. (node and node.dir and (node.expanded and "▾ " or "▸ ") or "")
         local text = lead .. (node and icon .. " " .. display(node.name) or "○ " .. display(item.notice))
         rows[#lines + 1] = { node = node, lead = #lead, guide = #guide, icon = #icon, hl = hl }
         lines[#lines + 1] = text
         if node then index[node.path] = #lines end
       end
-      if node and node.dir and (node.expanded or (S.query and node.loaded)) then push(stack, node, item.prefix .. (item.last and "  " or "│ ")) end
+      if node and node.dir and (node.expanded or (S.query and node.loaded)) then push(stack, node, item.prefix .. (item.last and "  " or "▏ ")) end
     end
     if #stack > 0 and uv.hrtime() < deadline then return vim.defer_fn(batch, 1) end
     if #stack > 0 then rows[#lines + 1], lines[#lines + 1] = {}, " ○ … cut off · too many loaded rows" end
@@ -192,7 +192,7 @@ api.nvim_set_decoration_provider(ns, {
     local function mark(col, opts) opts.ephemeral = true api.nvim_buf_set_extmark(S.buf, ns, line, col, opts) end
     if row.header then return mark(0, { end_col = #S.lines[line + 1], hl_group = "AosArg" }) end
     if not row.node then return mark(0, { end_col = #S.lines[line + 1], hl_group = "AosDim" }) end
-    mark(0, { end_col = row.guide, hl_group = "AosDim" })
+    mark(0, { end_col = row.guide, hl_group = "Whitespace" })
     mark(row.guide, { end_col = row.lead, hl_group = "AosDim" })
     mark(row.lead, { end_col = row.lead + row.icon, hl_group = row.hl })
     if row.node.path == S.current then mark(0, { line_hl_group = "PmenuSel" }) end
