@@ -91,7 +91,7 @@ function M.open(opts)
   local row0 = math.floor((vim.o.lines - height) / 3)
   local col0 = math.floor((vim.o.columns - total) / 2)
   local pbuf, lbuf = vim.api.nvim_create_buf(false, true), vim.api.nvim_create_buf(false, true)
-  vim.b[pbuf].completion = false -- blink.cmp's buffer keymaps would shadow <CR>/<Down>/<Up>
+  vim.b[pbuf].completion = false
   local vwin, vstate
   local show = type(opts.preview) == "function" and opts.preview or function(w, item) preview(w, item, vstate) end
   if opts.preview then

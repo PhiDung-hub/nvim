@@ -75,9 +75,10 @@ local function on_attach(ev)
 end
 
 local function start()
-  -- Requiring blink.cmp loads it before the first client starts, so every server gets its capabilities.
   -- One position encoding for every server, so copilot (UTF-16) and the rest agree on a shared buffer.
-  local caps = require("blink.cmp").get_lsp_capabilities({ general = { positionEncodings = { "utf-16" } } })
+  local caps = vim.lsp.protocol.make_client_capabilities()
+  caps.general.positionEncodings = { "utf-16" }
+  caps.textDocument.completion.completionItem.snippetSupport = true
   vim.lsp.config("*", { root_markers = { ".git" }, capabilities = caps })
   local lsp_start = vim.lsp.start
   vim.lsp.start = function(config, opts)

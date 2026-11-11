@@ -1,10 +1,5 @@
 {
   "plugins": {
-    "blink.cmp": {
-      "rev": "78336bc89ee5365633bcf754d93df01678b5c08f",
-      "src": "https://github.com/saghen/blink.cmp",
-      "version": "1.0.0 - 2.0.0"
-    },
     "fff": {
       "rev": "95fd777c2529fc7b4d7572dabff64cc07268f2c5",
       "src": "https://github.com/dmtrKovalenko/fff",

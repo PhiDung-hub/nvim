@@ -9,6 +9,9 @@ require("core.edit").setup()
 require("core.format").setup()
 require("core.lsp").setup()
 require("core.complete").setup()
+vim.api.nvim_create_autocmd("InsertEnter", {
+  once = true, callback = function(ev) require("core.cmp").setup(ev.buf) end,
+})
 require("ui.tabline")
 require("ui.markdown").setup()
 require("ui.cmdline").setup()
