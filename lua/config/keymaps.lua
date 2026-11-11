@@ -44,7 +44,7 @@ map("n", ";e", pick.diagnostics, { desc = "Diagnostics" })
 
 map("n", "<M-t>", function() require("ui.tree").toggle() end, { desc = "Tree" })
 map("n", "<S-M-T>", function() require("ui.tree").toggle(true) end, { desc = "Tree float" })
-map("n", "<S-M-B>", pick.buffers, { desc = "Buffers" })
+map("n", "<S-M-B>", function() require("ui.tree").toggle(true, "buffers") end, { desc = "Tree buffers" })
 
 -- Tools
 map({ "n", "t" }, "<m-->", require("ui.term").toggle, { desc = "Terminal" })

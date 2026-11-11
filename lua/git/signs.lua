@@ -172,14 +172,27 @@ local function update(buf)
 end
 
 local refresh_status
+local reloads = {}
 
 local function on_git_change(root)
   for _, loc in pairs(dirs) do
     if loc and loc.root == root then refresh_status(loc) break end
   end
-  for buf, st in pairs(bufs) do
-    if st.root == root then M.reload(buf) end
+  local pending, at = {}, 1
+  for buf, st in pairs(bufs) do if st.root == root then pending[#pending + 1] = buf end end
+  reloads[root] = (reloads[root] or 0) + 1
+  local generation = reloads[root]
+  local function batch()
+    if reloads[root] ~= generation then return end
+    local started = vim.uv.hrtime()
+    while at <= #pending and vim.uv.hrtime() - started < 2000000 do
+      local buf = pending[at]
+      at = at + 1
+      if api.nvim_buf_is_valid(buf) then M.reload(buf) end
+    end
+    if at <= #pending then vim.defer_fn(batch, 1) end
   end
+  batch()
 end
 
 local change_timers = {}
