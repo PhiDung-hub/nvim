@@ -203,7 +203,7 @@ local function badges(node)
   local d = diagnostics[node.path]
   local buf = not node.dir and (node.buf or vim.fn.bufnr(node.path)) or -1
   local dirty = modified[node.path]
-  if buf > 0 and api.nvim_buf_is_loaded(buf) then dirty = vim.bo[buf].modified end
+  if buf > 0 and api.nvim_buf_is_loaded(buf) then dirty = vim.fn.getbufvar(buf, "&modified") == 1 end
   if dirty then chunks[#chunks + 1] = { "● ", "AosArg" } end
   if d and d.errors > 0 then chunks[#chunks + 1] = { "✗" .. d.errors .. " ", "AosFailed" } end
   if d and d.warnings > 0 then chunks[#chunks + 1] = { "!" .. d.warnings .. " ", "AosRunning" } end

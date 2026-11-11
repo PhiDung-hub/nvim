@@ -1,4 +1,4 @@
--- :Pack — the plugin manager window (lazy.nvim's home view in the Agent OS look). Rows read
+-- :Pack — the plugin manager window (lazy.nvim's home view in the WAT look). Rows read
 -- `● name  version rev  time  reason`; ⏎ folds details open, and the footer lists the actions.
 local M = {}
 local api = vim.api

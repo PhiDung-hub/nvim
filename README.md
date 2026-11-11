@@ -1,6 +1,6 @@
 # Nvim-config
 
-Phil's Neovim 0.12 config, styled after the WezTerm Agent OS (`~/.config/wezterm/DESIGN.md`). Startup is about 13–15 ms.
+Phil's Neovim 0.12 config, styled after WAT (`~/.config/wezterm/DESIGN.md`). Startup is about 13–15 ms.
 
 ## Plugins
 

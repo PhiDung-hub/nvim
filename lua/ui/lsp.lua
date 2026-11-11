@@ -1,4 +1,4 @@
--- LSP and syntax UI in the Agent OS look: hover, peek, finder, outline, breadcrumbs, rename,
+-- LSP and syntax UI in the WAT look: hover, peek, finder, outline, breadcrumbs, rename,
 -- call hierarchy, and an inspector for the highlight/treesitter state under the cursor.
 local M = {}
 local pick = require("ui.pick")

@@ -13,7 +13,7 @@ end
 
 function M.available() return vim.env.WEZTERM_PANE ~= nil and vim.fn.executable("wezterm") == 1 end
 
--- Harness and a guessed state from the pane title (Agent OS's heuristic fallback).
+-- Harness and a guessed state from the pane title (WAT's heuristic fallback).
 function M.classify(title)
   local t = title or ""
   local lower = t:lower()
@@ -25,7 +25,7 @@ function M.classify(title)
   if lower:find("codex", 1, true) or spinning then return "codex", spinning and "running" or "idle" end
 end
 
--- Observed state per mux pane: the newest main-session line in Agent OS's events log,
+-- Observed state per mux pane: the newest main-session line in WAT's events log,
 -- read from its tail and cached by size+mtime.
 local cache = { key = nil, states = {} }
 local function observed()
@@ -74,7 +74,7 @@ local function identify(list)
   for _, p in ipairs(list) do p.kind = p.kind or procs[p.tty_name] end
 end
 
--- Agent panes, the ones sharing nvim's working directory first. Agent OS's own pane never counts.
+-- Agent panes, the ones sharing nvim's working directory first. WAT's own pane never counts.
 function M.panes(cb)
   wezterm({ "list", "--format", "json" }, function(r)
     if r.code ~= 0 then return cb({}, vim.trim(r.stderr or "wezterm cli failed")) end

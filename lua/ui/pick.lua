@@ -1,4 +1,4 @@
--- Minimal fuzzy picker in the Agent OS row grammar: `glyph · id · text`, prompt `❯ query`.
+-- Minimal fuzzy picker in the WAT row grammar: `glyph · id · text`, prompt `❯ query`.
 -- Item: { text = string, id? = string, glyph? = string, hl? = group, data? = any }.
 -- `opts.preview` adds a right pane showing `data.filename`/`data.bufnr` at `data.lnum`,
 -- or, as a function(win, item), whatever it draws into that pane.

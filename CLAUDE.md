@@ -8,7 +8,7 @@ One look with WezTerm and WAT. The guideline lives in `~/.config/wezterm/DESIGN.
 - The chrome follows the state colours: green done/running, yellow attention/waiting, blue ids/Codex, magenta shas/times/Claude, cyan args/paths/active tab, red failed, dim for idle or unknown. Code uses Tokyo Night syntax hues.
 - Square borders drawn on the cells' outer edge with one-eighth blocks (`winborder`/`pumborder` = `🭽▔🭾▕🭿▁🭼▏`), because `single` lines sit mid-cell and leave half a cell of `ground` outside them; titles sit just under the top line, and touching panes share one `▕▏` divider. Code passes `vim.o.winborder` (a list) or nothing, never `"single"`. Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `.
 - Rows read `glyph · id · text`, using the glyphs ✓ ◆ ○ ● ✗ ! ? ❯ ⎿ ▸ ▾.
-- One top bar like the published pages' tab bar (`laststatus=0`, `showtabline=2`), on a dark `#161619` row: buffers on the left, each padded one cell, other tabs ` 2:name ` in `dim` (only `+` and diagnostics keep their colour), no dividers. The current tab sits on a faint `#25262c` band in `text`: while the nvim pane has focus it reads ` ● 2:name line:col ` (green `●`, coloured icon, bold name, yellow `+`, magenta position); in an unfocused pane it is a plain ` 2:name ` on the same band (`AosTabIdle`/`AosTabIdleSel`). Only a typed key (`vim.on_key`) counts as focus coming back, never cursor or text events. Each tab carries its file icon, the name widened with parent dirs when two tabs share it (`a/init.lua`), `+` unsaved, a lock when read-only, and `✗n`/`!n` diagnostics; ` ! n:name ` marks pending agent hunks. While a tree, picker or popup has focus the bar keeps describing the last file (its tab stays on the band without the `●`; no internal filetypes or popup line counts). Labels and their widths are cached per buffer, so a cursor move only rebuilds the position. Right side: mode, the current file's icon · filetype · language servers (Copilot omitted; `lsp off` for a big file) · non-utf-8/non-unix flags, diagnostics, AI, agent, branch, and `totalL pct%`.
+- One top bar like the published pages' tab bar (`laststatus=0`, `showtabline=2`), on a dark `#161619` row: buffers on the left, each padded one cell, other tabs ` 2:name ` in `dim` (only `+` and diagnostics keep their colour), no dividers. The current tab sits on a faint `#25262c` band in `text`: while the nvim pane has focus it reads ` ● 2:name line:col ` (green `●`, coloured icon, bold name, yellow `+`, magenta position); in an unfocused pane it is a plain ` 2:name ` on the same band (`AosTabIdle`/`AosTabIdleSel`). Only a typed key (`vim.on_key`) counts as focus coming back, never cursor or text events. Each tab carries its file icon, the name widened with parent dirs when two tabs share it (`a/init.lua`), `+` unsaved, a lock when read-only, and `✗n`/`!n` diagnostics; ` ! n:name ` marks pending agent hunks. While a tree, picker or popup has focus the bar keeps describing the last file (its tab stays on the band without the `●`; no internal filetypes or popup line counts). Labels and their widths are cached per buffer, so a cursor move only rebuilds the position. It reads other buffers' options with `getbufvar` (see Gotchas). Right side: mode, the current file's icon · filetype · language servers (Copilot omitted; `lsp off` for a big file) · non-utf-8/non-unix flags, diagnostics, AI, agent, branch, and `totalL pct%`.
 - Shared highlight groups are `Aos*`: `AosSeg<Color>` for segments, `AosAgent*` for review hunks. Define them in `colors/wat.lua`, not at runtime: every `nvim_set_hl` after startup repaints the whole screen.
 
 ## Layout
@@ -16,7 +16,7 @@ One look with WezTerm and WAT. The guideline lives in `~/.config/wezterm/DESIGN.
 ```
 init.lua                 options → pack → autocmds → core → tabline → keymaps → agent
 colors/wat.lua           colorscheme from lua/design.lua
-lua/design.lua           Agent OS tokens (verbatim from DESIGN.md)
+lua/design.lua           WAT tokens (verbatim from DESIGN.md)
 lua/plugins.lua          the only plugin spec (lazy.nvim-style tables)
 lua/config/              options, pack (vim.pack + lazy loading), autocmds (reload, bigfile, sessions, indent guides), keymaps, commands
 lsp/<name>.lua           one config per server (local copies of nvim-lspconfig's, trimmed)
@@ -102,7 +102,7 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
 ## Agent co-working (lua/agent)
 
 Attach nvim to a running Claude Code / Codex session, or start one in a split.
-- `transport.lua` uses `wezterm cli list` and identifies agents by title, with `ps` on the pane's tty as fallback. Busy state comes from Agent OS's `~/.local/state/wezterm-agent-dashboard/events.jsonl` tail (observed) or the title spinner (guess). It sends with `send-text` (bracketed paste, then `\r`). It never presses Enter while the agent is `waiting` on a prompt.
+- `transport.lua` uses `wezterm cli list` and identifies agents by title, with `ps` on the pane's tty as fallback. Busy state comes from WAT's `~/.local/state/wezterm-agent-dashboard/events.jsonl` tail (observed) or the title spinner (guess). It sends with `send-text` (bracketed paste, then `\r`). It never presses Enter while the agent is `waiting` on a prompt.
 - `review.lua` keeps a per-buffer base (the last accepted state). Every reload from disk is diffed against it and drawn inline: tinted new lines with a `▌` sign, removed lines as virtual lines, and a `● agent · +n −m` note. A human save accepts what is on screen.
 - `view.lua` mirrors the agent pane's screen in a right split (`wezterm cli get-text`, 700 ms while visible).
 
@@ -163,6 +163,7 @@ Tree: `<CR>`/`l`/`o` open or fold, `h` parent/collapse, `s`/`S` splits, `t` tab,
 
 ## Gotchas
 
+- **Never read `vim.bo[other_buf]` (or `vim.wo[other_win]`) on a hot path** (tabline, statuscolumn, winbar, cursor or text autocmds). nvim switches to that buffer to read the option, which marks every window for a full redraw: the top bar did it per listed and hidden buffer on every cursor move, so each move re-highlighted all 42 visible lines instead of 2 (6.6 → 2.0 ms CPU per move in `ui/tree.lua`). Use `vim.fn.getbufvar(buf, "&opt")` (booleans come back as 0/1) and `vim.fn.buflisted(buf)`.
 - **nvim-treesitter is on `main`** (needs the tree-sitter CLI ≥ 0.26 and a C compiler). Parsers install to `~/.local/share/nvim/site/parser`, which must win on the runtimepath. The missing check uses `get_installed()`, because nvim's bundled lua/markdown parsers lag the queries (`Invalid field name "operator"`).
 - After changing `lua/plugins.lua`, restart nvim; vim.pack installs new plugins on startup, and `:Pack` → `C` removes ones you dropped.
 - The Solidity server is not in `:Tools`; `nomicfoundation-solidity-language-server` must be on PATH. `:Tools` builds move-analyzer with cargo.

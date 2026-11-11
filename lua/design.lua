@@ -1,4 +1,4 @@
--- Agent OS design tokens, copied verbatim from ~/.config/wezterm/DESIGN.md (that file wins).
+-- WAT design tokens (DESIGN.md). Copy as-is; update with that file.
 return {
   ground = '#1c1c1f', surface = '#24283b',
   text = '#d4d4d8', muted = '#a9b1d6', dim = '#9aa0ab', faint = '#6f7584',

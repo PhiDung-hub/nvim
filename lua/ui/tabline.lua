@@ -5,14 +5,18 @@ local icons = require("ui.icons")
 
 local function esc(s) return (s:gsub("%%", "%%%%")) end
 
+-- `vim.bo[other]` switches to that buffer to read the option, which marks every window for a full redraw (42 lines
+-- re-highlighted per cursor move instead of 2). getbufvar reads it in place; booleans come back as 0/1.
+local function opt(buf, name) return vim.fn.getbufvar(buf, "&" .. name) end
+
 -- The blank buffer nvim starts with (unnamed, empty, unchanged) is not worth a tab.
 local function blank(b)
-  return vim.api.nvim_buf_get_name(b) == "" and not vim.bo[b].modified and vim.bo[b].buftype == ""
+  return vim.api.nvim_buf_get_name(b) == "" and opt(b, "modified") == 0 and opt(b, "buftype") == ""
     and vim.api.nvim_buf_line_count(b) == 1 and vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] == ""
 end
 
 function M.listed()
-  return vim.tbl_filter(function(b) return vim.bo[b].buflisted and not blank(b) end, vim.api.nvim_list_bufs())
+  return vim.tbl_filter(function(b) return vim.fn.buflisted(b) == 1 and not blank(b) end, vim.api.nvim_list_bufs())
 end
 
 -- The current tab sits on TabLineSel's band, so its accent colours are re-derived onto that background.
@@ -61,8 +65,8 @@ local lock = "\u{f023}"
 -- focus (their buffers are unlisted scratch ones with internal filetypes).
 local subject = {}
 local function describes(buf)
-  local bt = vim.bo[buf].buftype
-  return bt == "" or bt == "help" or vim.bo[buf].buflisted
+  local bt = opt(buf, "buftype")
+  return bt == "" or bt == "help" or vim.fn.buflisted(buf) == 1
 end
 local function subject_now()
   local buf = vim.api.nvim_get_current_buf()
@@ -88,14 +92,14 @@ local function buf_label(buf, index, name, is_current)
     return "%#" .. on_surface(group, current and "TabLineSel") .. "#" .. text .. base
   end
   local mark = require("agent.review").pending(buf) > 0 and g.attention .. " " or ""
-  local terminal = vim.bo[buf].buftype == "terminal"
+  local terminal = opt(buf, "buftype") == "terminal"
   local icon, icon_hl = icons.get_icon(terminal and "terminal" or name:match("[^/]*$"), nil, { default = true })
   if name == "" then name = "[No Name]" end
   if #name > 28 then name = "…" .. name:sub(-27) end
   local dir, file = name:match("^(.*/)([^/]*)$")
   local label = paint(icon_hl, icon) .. " " .. (dir and paint("AosDim", esc(dir)) .. esc(file) or esc(name))
-  if vim.bo[buf].modified then label = label .. " " .. paint("AosRunning", "+", true) end
-  if not terminal and (vim.bo[buf].readonly or not vim.bo[buf].modifiable) then label = label .. " " .. paint("AosDim", lock) end
+  if opt(buf, "modified") == 1 then label = label .. " " .. paint("AosRunning", "+", true) end
+  if not terminal and (opt(buf, "readonly") == 1 or opt(buf, "modifiable") == 0) then label = label .. " " .. paint("AosDim", lock) end
   local counts = vim.diagnostic.count(buf)
   if (counts[1] or 0) > 0 then label = label .. " " .. paint("AosFailed", g.failed .. counts[1], true) end
   if (counts[2] or 0) > 0 then label = label .. " " .. paint("AosRunning", g.attention .. counts[2], true) end
@@ -107,10 +111,10 @@ end
 -- building it); the render runs on every cursor move.
 local cache = {}
 local function tab(buf, index, name, is_current)
-  local bo, counts = vim.bo[buf], vim.diagnostic.count(buf)
+  local counts = vim.diagnostic.count(buf)
   local key = table.concat({
-    index, name, is_current and (subject.live and 2 or 1) or 0, focused and 1 or 0, bo.modified and 1 or 0, (bo.readonly or not bo.modifiable) and 1 or 0,
-    bo.buftype, counts[1] or 0, counts[2] or 0, require("agent.review").pending(buf),
+    index, name, is_current and (subject.live and 2 or 1) or 0, focused and 1 or 0, opt(buf, "modified"), opt(buf, "readonly"), opt(buf, "modifiable"),
+    opt(buf, "buftype"), counts[1] or 0, counts[2] or 0, require("agent.review").pending(buf),
   }, "\1")
   local c = cache[buf]
   if not c or c.key ~= key then
@@ -159,8 +163,7 @@ end
 
 -- Current file: filetype icon and name, attached language servers, and any non-default encoding/format.
 local function file_info(buf)
-  local bo = vim.bo[buf]
-  local ft = bo.filetype
+  local ft = opt(buf, "filetype")
   if ft == "" then return "" end
   local icon, hl = icons.get_icon_by_filetype(ft, { default = true })
   local clients = vim.tbl_map(function(c) return c.name end, vim.lsp.get_clients({ bufnr = buf }))
@@ -168,9 +171,9 @@ local function file_info(buf)
   local out = ("%%#%s#%s %%#AosDim#%s"):format(hl, icon, esc(ft))
   if #clients > 0 then out = out .. "%#AosFaint# · %#AosId#" .. esc(table.concat(clients, ",")) end
   if vim.b[buf].lsp_off then out = out .. "%#AosFaint# · lsp off" end
-  local enc = bo.fileencoding
-  if (enc ~= "" and enc ~= "utf-8") or bo.fileformat ~= "unix" then
-    out = out .. "%#AosFaint# · %#AosRunning#" .. esc(enc) .. (bo.fileformat ~= "unix" and " " .. bo.fileformat or "")
+  local enc, ff = opt(buf, "fileencoding"), opt(buf, "fileformat")
+  if (enc ~= "" and enc ~= "utf-8") or ff ~= "unix" then
+    out = out .. "%#AosFaint# · %#AosRunning#" .. esc(enc) .. (ff ~= "unix" and " " .. ff or "")
   end
   return out .. " "
 end

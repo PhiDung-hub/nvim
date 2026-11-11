@@ -1,4 +1,4 @@
--- File glyphs by name, extension or filetype in Agent OS colours (replaces nvim-web-devicons).
+-- File glyphs by name, extension or filetype in WAT colours (replaces nvim-web-devicons).
 -- Glyphs stay as \u{} escapes: literal Nerd Font characters have been lost to empty strings in this repo before.
 local M = {}
 
