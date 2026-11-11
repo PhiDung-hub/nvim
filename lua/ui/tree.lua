@@ -827,6 +827,11 @@ local function filter()
   render()
 end
 
+local function set_root(path)
+  M.open(path, S.float)
+  vim.cmd.tcd(vim.fn.fnameescape(path))
+end
+
 M.keys = { { section = "File tree", keys = {
   { "<CR>", "open file / toggle directory", run = function() open_file() end },
   { "l", "open file / toggle directory", run = function() open_file() end },
@@ -853,8 +858,9 @@ M.keys = { { section = "File tree", keys = {
     end
     render()
   end },
-  { ".", "root at directory", run = function() local node = node_at() if node and node.dir then M.open(node.path, S.float) end end },
-  { "-", "root up", run = function() M.open(vim.fs.dirname(S.root), S.float) end },
+  { ".", "root at directory (and :tcd)", run = function() local node = node_at() if node and node.dir then set_root(node.path) end end },
+  { "<BS>", "root up (and :tcd)", run = function() set_root(vim.fs.dirname(S.root)) end },
+  { "-", "root up (and :tcd)", run = function() set_root(vim.fs.dirname(S.root)) end },
   { "/", "filter loaded names (Enter selects first, Esc clears)", run = filter },
   { "g?", "help", run = function() require("ui.keys").open("Popups", "File tree") end },
   { "q", "close", run = function() M.close() end },
