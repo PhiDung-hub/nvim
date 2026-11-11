@@ -1,15 +1,14 @@
 # Nvim-config
 
-Phil's Neovim 0.12 config, styled after the WezTerm Agent OS (`~/.config/wezterm/DESIGN.md`). Startup is about 14.5 ms.
+Phil's Neovim 0.12 config, styled after the WezTerm Agent OS (`~/.config/wezterm/DESIGN.md`). Startup is about 13.4 ms.
 
 ## Plugins
 
-4 upstream plugins on nvim's built-in `vim.pack`, with local lazy loading and a `:Pack` manager window; everything small or medium is local Lua.
+3 upstream plugins on nvim's built-in `vim.pack`, with local lazy loading and a `:Pack` manager window; everything small or medium is local Lua.
 
 ```
 vim.pack (built in)
 ├── lean.nvim            Lean
-├── mason.nvim           tool installer
 ├── nvim-treesitter      parsers + queries
 └── fff                  file/content search
 ```

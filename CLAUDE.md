@@ -1,6 +1,6 @@
 # Neovim Configuration
 
-Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Four upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 17 ms headless.
+Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Three upstream plugins (plus language servers installed by `:Tools` and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 13.4 ms headless.
 
 ## Design
 
@@ -32,6 +32,7 @@ lua/ui/fix.lua           quick fix: cursor-line hint, apply/pick with diff previ
 lua/ui/tabline.lua       buffers + status segments
 lua/ui/term.lua          float terminal
 lua/ui/pack.lua          :Pack / :Lazy manager window
+lua/ui/tools.lua         :Tools / :Mason installer for the language servers and formatters
 lua/ui/cmdline.lua       centred command line (ext_cmdline float, ghost completion, local list below)
 lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for fff
 lua/ui/markdown.lua      in-buffer markdown rendering (extmarks from the markdown parsers)
@@ -41,19 +42,18 @@ lua/git/                 VS Code-style git (below): repo, signs, scm, diff, merg
 
 ## Plugins (lua/plugins.lua)
 
-4 upstream plugins, managed by `vim.pack` (installs to `~/.local/share/nvim/site/pack/core/opt`, lockfile `nvim-pack-lock.json`). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
+3 upstream plugins, managed by `vim.pack` (installs to `~/.local/share/nvim/site/pack/core/opt`, lockfile `nvim-pack-lock.json`). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
 
 ```
 vim.pack (built in)             plugin manager + config/pack.lua lazy loading · needs git
 ├── lean.nvim                   Lean LSP + infoview, *.lean        15.1k Lua · ships its own lsp/leanls.lua · needs lean/lake (elan)
-├── mason.nvim                  installer, on :Mason only          15.0k Lua · bin/ prepended to PATH
 ├── nvim-treesitter  main       parser install + queries + indent   4.6k Lua + queries · needs tree-sitter CLI ≥0.26, cc
 └── fff  v0.11.0                file/content search, keys          10.2k Lua + native libfff_nvim.so (download_or_build)
 ```
 
 Soft edges (`pcall`): fff → devicons shim/plenary.filetype; without plenary it uses `vim.filetype.match` and extension fallbacks. No remaining plugin requires nui or plenary.
 
-External tools outside lazy: language servers and formatters in `~/.local/share/nvim/mason/bin` (copilot-language-server, lua-language-server, pyright, ruff, rust-analyzer fallback, stylua, prettierd, taplo, yaml/json/html/css/svelte/tailwind/emmet/bash/prisma servers…), rustup `rust-analyzer`, TypeScript 7 `tsc`, `llama-server` + model in `~/.local/share/llama`, `codex`, `wezterm`, `rg`, `git`, `wl-copy`/`xsel`, `solhint`, `forge`.
+External tools: language servers and formatters installed by `:Tools` into `~/.local/share/nvim/mason/bin` (copilot-language-server, lua-language-server, pyright, ruff, rust-analyzer fallback, stylua, prettierd, taplo, yaml/json/html/css/svelte/tailwind/emmet/bash/prisma servers…), rustup `rust-analyzer`, TypeScript 7 `tsc`, `llama-server` + model in `~/.local/share/llama`, `codex`, `wezterm`, `rg`, `git`, `wl-copy`/`xsel`, `solhint`, `forge`.
 
 ### Replacement plan (next local rewrites, easiest first)
 
@@ -61,12 +61,12 @@ External tools outside lazy: language servers and formatters in `~/.local/share/
 |---|---|---|---|---|
 | 1 ✓ done | neo-tree + nui + plenary | `ui/tree.lua`: async libuv tree, `git.repo` status, sidebar/float | medium | six upstream plugins remain |
 | 2 | fff | `ui/pick` + `rg --files` / `rg --vimgrep`, frecency from `v:oldfiles` | medium | loses fff's native scorer |
-| 3 | mason | `:Tools` installing via npm/cargo/pip into one bin dir | medium | keep the existing bin dir on PATH |
+| 3 ✓ done | mason | `ui/tools.lua` `:Tools` (alias `:Mason`): fixed list of 21 tools via npm, pip venv, cargo or GitHub releases into the same `mason/` dir | medium | three upstream plugins remain |
 | 4 ✓ done | lazy.nvim | `vim.pack` + `config/pack.lua` + `ui/pack.lua` | medium | lazy loading, build hooks, :Pack window |
 | 5 ✓ done | blink.cmp | `core/cmp.lua`: native `vim.lsp.completion`, capped buffer/path sources, docs/signatures; cmdline list in `ui/cmdline` | large | native fuzzy matching and snippets |
 | — | nvim-treesitter, lean.nvim | keep | — | queries/parser builds and the Lean infoview are too large to own |
 
-Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`; blink.cmp → native completion + `core/cmp` + `ui/cmdline`.
+Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`; mason → `ui/tools`; blink.cmp → native completion + `core/cmp` + `ui/cmdline`.
 
 Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
 
@@ -75,7 +75,7 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
 - `lua/plugins.lua` keeps lazy.nvim-style specs: `"owner/repo"`, `version` (semver, e.g. `"1.x"`) / `tag` / `branch`, `lazy = false`, `event` (`"BufReadPre *.lean"` takes a pattern), `ft`, `cmd`, `keys` (`{ lhs, rhs, desc, mode }`), `init`, `opts` (→ `require(main).setup`), `config`, `build` (`":Cmd"` or a function, run on vim.pack's `PackChanged` install/update).
 - `vim.pack.add` installs everything at startup but loads nothing (`load` is a no-op); `lazy = false` or a spec without triggers is `packadd`ed during init. Triggers: one-shot autocmds (the event is replayed for augroups the plugin created), stub user commands (re-run with range/bang/args, completion loads first), stub keymaps, and a `package.loaders` searcher so `require` of an unloaded plugin's module loads it (for example, loading fff on its first `require`). Builtins gzip/matchit/netrw/tar/tohtml/tutor/zip are disabled.
 - `:Pack` (alias `:Lazy`): centred ` ❯ pack ` window, loaded/not-loaded sections with version, rev, load time and reason or triggers. `U` update (vim.pack's review buffer; `:w` applies), `S` sync without review, `u` update the plugin under the cursor, `l` load it, `C` remove plugins on disk that left the spec, `R` restore the lockfile revisions, `L` the update log, `⏎` details (src, path, version, triggers, build), `q` close.
-- Startup is about 14.6 ms headless, median of 5 (16.2 ms on lazy.nvim + blink).
+- Startup is about 13.4 ms headless, median of 5 (16.2 ms on lazy.nvim + blink + mason).
 
 ## LSP (lsp/*.lua + lua/core/lsp.lua)
 
@@ -84,7 +84,7 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
 - Always enabled: `ts_ls`, `tsc`, `rust_analyzer`, `emmet_ls`, `tailwindcss`, `svelte`, `jsonls`, `html`, `cssls`, `ruff`, `solidity_ls_nomicfoundation`, `move_analyzer`. Lean goes through lean.nvim (`vim.g.lean_config`; it has no `setup()`).
 - Enabled only when the binary exists: pyright, clangd, bashls, lua_ls, taplo, yamlls, prismals.
 - **TypeScript routing:** a root with `node_modules/typescript/lib/tsserver.js` (TS ≤ 5) uses `ts_ls`. Any other root uses `tsc --lsp --stdio`, TypeScript 7's native server, preferring the project's local binary. The global TypeScript here is 7.x and ships no tsserver.js, which is why `ts_ls` alone failed.
-- **Rust:** rustup's `~/.cargo/bin/rust-analyzer` (matches the toolchain; Mason's standalone build may not), with clippy checks.
+- **Rust:** rustup's `~/.cargo/bin/rust-analyzer` (matches the toolchain; the `:Tools` standalone build may not), with clippy checks.
 - `move_analyzer` needs a `Move.toml` (`workspace_required`).
 - UI lives in `lua/ui/lsp.lua` (replaces lspsaga), all floats titled ` ❯ verb `:
   - `K` hover (own request: blank lines and stacked rules collapsed to one faint `─` divider, 1-cell padding; markdown rules and code-fence borders use the `Whitespace` guide colour) · `gd` definition (several → previewed list) · `gp` peek: editable float, `<CR>` opens it, `q` closes
@@ -134,7 +134,7 @@ All git work is async through `git/repo.lua` (run, root, porcelain-v2 status, `s
 
 Ghost text tagged with its source (`● local` green, `● copilot` dim, `● codex` blue); a higher-ranked source never gets replaced by a lower one (codex > local > copilot).
 - **Local (default as-you-type):** Qwen2.5-Coder 0.5B Q8 via llama.cpp `llama-server /infill` on `127.0.0.1:18080`, installed in `~/.local/share/llama` (`bin/` + the `.gguf`, ~560 MB). Started on first insert, 6 threads, 24 tokens, 100 ms debounce. Measured in nvim: server up in 0.7 s, warm suggestions 0.23–0.35 s, about 0.6 GB RSS. One server per machine: a second nvim's server fails to bind and reuses the first; it dies with the nvim that owns it, and the next request restarts it. A suggestion that hits the token limit drops its unfinished last line. Override with `vim.g.complete_local_bin` / `vim.g.complete_local_model`.
-- **Copilot (fallback):** `copilot-language-server` (Mason) answers `textDocument/inlineCompletion` when the local server is missing, loading or failing. Sign in once with `:LspCopilotSignIn`.
+- **Copilot (fallback):** `copilot-language-server` (`:Tools`) answers `textDocument/inlineCompletion` when the local server is missing, loading or failing. Sign in once with `:LspCopilotSignIn`.
 - **Codex (on demand):** `<M-]>` starts one `codex app-server` (ChatGPT login) and runs a fresh ephemeral read-only turn (`gpt-6-luna`, effort low, no tools): 2.5–7 s. An error pauses it for 5 min. Override the model with `vim.g.complete_codex_model`.
 - `:Complete auto|copilot|codex|off`: `auto` = local then Copilot; `copilot`/`codex` use only that source as you type.
 - Insert keys (owned by `core/cmp.lua`): with the native completion menu open, `<Tab>`/`<S-Tab>` (also `<Down>`/`<Up>`, `<C-n>`/`<C-p>`) select the next/previous item (nothing is preselected) and the selected item previews as ghost text; `<CR>` confirms it (with nothing selected `<CR>` is a newline). AI ghost text is hidden while the menu is open. With the menu closed, `<Tab>` jumps to the next snippet field, else accepts AI ghost text, else inserts a tab; `<S-Tab>` goes to the previous snippet field, else unindents. `<C-e>` cancels the menu; `<C-b>`/`<C-f>` scroll its docs. The cmdline list opens below the centred prompt: `<Tab>`/`<S-Tab>` select, `<CR>` accepts only a selected item and runs the line, `<C-l>` accepts ghost text. `<M-]>` ask Codex now, `<C-]>` dismiss. Normal-mode `<Tab>` still cycles buffers.
@@ -164,7 +164,8 @@ Tree: `<CR>`/`l`/`o` open or fold, `h` parent/collapse, `s`/`S` splits, `t` tab,
 
 - **nvim-treesitter is on `main`** (needs the tree-sitter CLI ≥ 0.26 and a C compiler). Parsers install to `~/.local/share/nvim/site/parser`, which must win on the runtimepath. The missing check uses `get_installed()`, because nvim's bundled lua/markdown parsers lag the queries (`Invalid field name "operator"`).
 - After changing `lua/plugins.lua`, restart nvim; vim.pack installs new plugins on startup, and `:Pack` → `C` removes ones you dropped.
-- Solidity/Move servers are not Mason-managed; `nomicfoundation-solidity-language-server` and `move-analyzer` must be on PATH.
+- The Solidity server is not in `:Tools`; `nomicfoundation-solidity-language-server` must be on PATH. `:Tools` builds move-analyzer with cargo.
+- `:Tools` (alias `:Mason`, `ui/tools.lua`): `i`/`u` install or update the row, `U` update all installed, `x` remove. Each install stages into `packages/<name>.new` and swaps in only on success, so a failed update keeps the old tool; bins are relinked in `mason/bin` and a `receipt.json` records the version.
 
 ## Maintenance
 

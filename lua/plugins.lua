@@ -5,11 +5,6 @@ local parsers = {
 }
 return {
   {
-    "mason-org/mason.nvim",
-    cmd = { "Mason", "MasonInstall", "MasonUpdate" },
-    opts = { ui = { border = "single" } },
-  },
-  {
     "nvim-treesitter/nvim-treesitter",
     branch = "main",
     lazy = false,
