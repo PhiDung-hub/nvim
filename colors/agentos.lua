@@ -47,7 +47,11 @@ local hl = {
   PmenuSbar = { bg = t.track },
   PmenuThumb = { bg = t.border },
   PmenuKind = { fg = t.cyan },
-  PmenuExtra = { fg = t.dim },
+  PmenuExtra = { fg = t.dim, italic = true },
+  PmenuExtraSel = { fg = t.dim, bg = t.selection, italic = true },
+  PmenuMatch = { fg = t.cyan, bold = true },
+  PmenuMatchSel = { fg = t.cyan, bg = t.selection, bold = true },
+  PmenuBorder = { link = "AosCmpMenuBorder" },
   StatusLine = { fg = t.dim },
   StatusLineNC = { fg = t.faint },
   WinBar = { fg = t.text, bold = true },
@@ -94,7 +98,7 @@ local hl = {
   LspReferenceRead = { bg = t.selection },
   LspReferenceWrite = { bg = t.selection, underline = true },
   LspInlayHint = { fg = t.faint, italic = true },
-  LspSignatureActiveParameter = { fg = t.yellow, bold = true },
+  LspSignatureActiveParameter = { link = "AosCmpSignatureHelpActiveParameter" },
 
   Comment = { fg = t.dim, italic = true },
   Constant = { fg = syntax.orange },
@@ -227,18 +231,19 @@ local hl = {
   NeoTreeFloatTitle = { link = "FloatTitle" },
   FFFBorder = { link = "FloatBorder" },
   -- completion
-  BlinkCmpMenuBorder = { link = "FloatBorder" },
-  BlinkCmpDocBorder = { link = "FloatBorder" },
-  BlinkCmpSignatureHelpBorder = { link = "FloatBorder" },
-  BlinkCmpLabelMatch = { fg = t.cyan, bold = true },
-  BlinkCmpLabelDeprecated = { fg = t.dim, strikethrough = true },
-  BlinkCmpSource = { fg = t.dim, italic = true },
-  BlinkCmpDocSeparator = { fg = t.faint, bg = t.ground },
-  BlinkCmpSignatureHelpActiveParameter = { fg = t.cyan, bg = t.selection, bold = true },
-  BlinkCmpGhostText = { fg = t.dim, italic = true },
-  BlinkCmpKind = { fg = t.muted },
+  AosCmpMenuBorder = { link = "FloatBorder" },
+  AosCmpDocBorder = { link = "FloatBorder" },
+  AosCmpSignatureHelpBorder = { link = "FloatBorder" },
+  AosCmpLabelMatch = { fg = t.cyan, bold = true },
+  AosCmpLabelDeprecated = { fg = t.dim, strikethrough = true },
+  AosCmpSource = { fg = t.dim, italic = true },
+  AosCmpDocSeparator = { fg = t.faint, bg = t.ground },
+  AosCmpSignatureHelpActiveParameter = { fg = t.cyan, bg = t.selection, bold = true },
+  AosCmpGhostText = { fg = t.dim, italic = true },
+  AosCmpKind = { fg = t.muted },
 }
 for group, kinds in pairs({
+  AosCmpKind = "Variable Field Property",
   AosIconBlue = "Method Function Constructor Operator",
   AosIconMagenta = "Class Interface Struct Enum TypeParameter",
   AosIconCyan = "Module File Folder Reference",
@@ -246,7 +251,7 @@ for group, kinds in pairs({
   AosIconGreen = "Snippet",
   AosIconDim = "Keyword Text",
 }) do
-  for kind in kinds:gmatch("%a+") do hl["BlinkCmpKind" .. kind] = { link = group } end
+  for kind in kinds:gmatch("%a+") do hl["AosCmpKind" .. kind] = { link = group } end
 end
 
 for name, spec in pairs(hl) do

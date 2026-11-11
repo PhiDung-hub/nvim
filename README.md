@@ -4,18 +4,17 @@ Phil's Neovim 0.12 config, styled after the WezTerm Agent OS (`~/.config/wezterm
 
 ## Plugins
 
-5 upstream plugins on nvim's built-in `vim.pack`, with local lazy loading and a `:Pack` manager window; everything small or medium is local Lua.
+4 upstream plugins on nvim's built-in `vim.pack`, with local lazy loading and a `:Pack` manager window; everything small or medium is local Lua.
 
 ```
 vim.pack (built in)
-├── blink.cmp            completion menu
 ├── lean.nvim            Lean
 ├── mason.nvim           tool installer
 ├── nvim-treesitter      parsers + queries
 └── fff                  file/content search
 ```
 
-Local replacements: plugin manager (lazy.nvim), file tree (neo-tree), git (gitsigns and more), file icons, markdown rendering, per-server LSP configs (`lsp/`), tabline/statusline, picker, LSP UI (hover, peek, finder, outline, breadcrumbs), terminal, git signs, formatting/linting, pairs and tag close, colour swatches, sessions, big-file guard, colorscheme. The plan for replacing the remaining plugins, easiest first, is in CLAUDE.md.
+Local replacements: completion (native LSP, buffer/path sources, snippets, docs/signatures and command-line list), plugin manager (lazy.nvim), file tree (neo-tree), git (gitsigns and more), file icons, markdown rendering, per-server LSP configs (`lsp/`), tabline/statusline, picker, LSP UI (hover, peek, finder, outline, breadcrumbs), terminal, git signs, formatting/linting, pairs and tag close, colour swatches, sessions, big-file guard, colorscheme. The plan for replacing the remaining plugins, easiest first, is in CLAUDE.md.
 
 ## Features
 

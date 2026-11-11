@@ -40,8 +40,7 @@ local rank = { copilot = 1, ["local"] = 2, codex = 3 }
 
 -- The completion menu owns the ghost line while it is open: Tab cycles its items and previews the selected one.
 local function menu_open()
-  local cmp = package.loaded["blink.cmp"]
-  return (cmp and cmp.is_menu_visible()) or vim.fn.pumvisible() == 1
+  return vim.fn.pumvisible() == 1
 end
 
 local function show(ctx, text, source, item)
@@ -358,7 +357,7 @@ end
 -- Triggers and keys ---------------------------------------------------------------------------
 
 local function eligible(buf)
-  return M.mode ~= "off" and vim.bo[buf].buftype == "" and not vim.b[buf].bigfile and vim.api.nvim_buf_get_name(buf) ~= ""
+  return M.mode ~= "off" and vim.b[buf].completion ~= false and vim.bo[buf].buftype == "" and not vim.b[buf].bigfile and vim.api.nvim_buf_get_name(buf) ~= ""
 end
 
 local function schedule(name, delay, fn)
@@ -403,7 +402,7 @@ end
 function M.setup()
   vim.api.nvim_set_hl(0, "AosGhost", { fg = require("design").dim, italic = true })
   local group = vim.api.nvim_create_augroup("CoreComplete", {})
-  vim.api.nvim_create_autocmd("User", { group = group, pattern = "BlinkCmpMenuOpen", callback = function() clear() end })
+  vim.api.nvim_create_autocmd("CompleteChanged", { group = group, callback = function() if menu_open() then clear() end end })
   vim.api.nvim_create_autocmd({ "InsertEnter", "TextChangedI", "CursorMovedI" }, { group = group, callback = on_change })
   vim.api.nvim_create_autocmd({ "InsertLeave", "BufLeave" }, {
     group = group,
@@ -424,9 +423,6 @@ function M.setup()
     end,
   })
 
-  vim.keymap.set("i", "<Tab>", function()
-    if not M.accept() then vim.api.nvim_feedkeys(vim.keycode("<Tab>"), "n", false) end
-  end, { desc = "Accept AI suggestion" })
   vim.keymap.set("i", "<M-]>", function() codex.down_until = 0 M.codex_request(context()) end, { desc = "Ask Codex now" })
   vim.keymap.set("i", "<C-]>", clear, { desc = "Dismiss AI suggestion" })
 
