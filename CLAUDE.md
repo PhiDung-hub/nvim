@@ -1,6 +1,6 @@
 # Neovim Configuration
 
-Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Five upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 12 ms headless.
+Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Five upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 14.5 ms headless.
 
 ## Design
 
@@ -51,7 +51,7 @@ vim.pack (built in)             plugin manager + config/pack.lua lazy loading ·
 └── fff  v0.11.0                file/content search, keys          10.2k Lua + native libfff_nvim.so (download_or_build)
 ```
 
-Soft edges (`pcall`): fff → devicons shim/plenary.filetype; without plenary it uses `vim.filetype.match` and extension fallbacks. No remaining plugin requires nui or plenary. Removed plugins (neo-tree, nui, plenary, nvim-web-devicons, render-markdown, nvim-lspconfig) remain on disk; the spec and lockfile no longer load them.
+Soft edges (`pcall`): fff → devicons shim/plenary.filetype; without plenary it uses `vim.filetype.match` and extension fallbacks. No remaining plugin requires nui or plenary.
 
 External tools outside lazy: language servers and formatters in `~/.local/share/nvim/mason/bin` (copilot-language-server, lua-language-server, pyright, ruff, rust-analyzer fallback, stylua, prettierd, taplo, yaml/json/html/css/svelte/tailwind/emmet/bash/prisma servers…), rustup `rust-analyzer`, TypeScript 7 `tsc`, `llama-server` + model in `~/.local/share/llama`, `codex`, `wezterm`, `rg`, `git`, `wl-copy`/`xsel`, `solhint`, `forge`.
 
@@ -75,7 +75,7 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
 - `lua/plugins.lua` keeps lazy.nvim-style specs: `"owner/repo"`, `version` (semver, e.g. `"1.x"`) / `tag` / `branch`, `lazy = false`, `event` (`"BufReadPre *.lean"` takes a pattern), `ft`, `cmd`, `keys` (`{ lhs, rhs, desc, mode }`), `init`, `opts` (→ `require(main).setup`), `config`, `build` (`":Cmd"` or a function, run on vim.pack's `PackChanged` install/update).
 - `vim.pack.add` installs everything at startup but loads nothing (`load` is a no-op); `lazy = false` or a spec without triggers is `packadd`ed during init. Triggers: one-shot autocmds (the event is replayed for augroups the plugin created), stub user commands (re-run with range/bang/args, completion loads first), stub keymaps, and a `package.loaders` searcher so `require` of an unloaded plugin's module loads it (core/lsp requires `blink.cmp` on file open). Builtins gzip/matchit/netrw/tar/tohtml/tutor/zip are disabled.
 - `:Pack` (alias `:Lazy`): centred ` ❯ pack ` window, loaded/not-loaded sections with version, rev, load time and reason or triggers. `U` update (vim.pack's review buffer; `:w` applies), `S` sync without review, `u` update the plugin under the cursor, `l` load it, `C` remove plugins on disk that left the spec, `R` restore the lockfile revisions, `L` the update log, `⏎` details (src, path, version, triggers, build), `q` close.
-- Startup is about 14.5 ms headless, median of 5 (16.2 ms on lazy.nvim). The old `~/.local/share/nvim/lazy` checkouts are no longer read.
+- Startup is about 14.5 ms headless, median of 5 (16.2 ms on lazy.nvim).
 
 ## LSP (lsp/*.lua + lua/core/lsp.lua)
 
@@ -162,7 +162,7 @@ Tree: `<CR>`/`l`/`o` open or fold, `h` parent/collapse, `s`/`S` splits, `t` tab,
 
 ## Gotchas
 
-- **nvim-treesitter is on `main`** (needs the tree-sitter CLI ≥ 0.26 and a C compiler). Parsers install to `~/.local/share/nvim/site/parser`, which must win on the runtimepath. The missing check uses `get_installed()`, because nvim's bundled lua/markdown parsers lag the queries (`Invalid field name "operator"`). Stale master-era `.so` files may still sit in `~/.local/share/nvim/lazy/nvim-treesitter/parser/`; they are dead weight.
+- **nvim-treesitter is on `main`** (needs the tree-sitter CLI ≥ 0.26 and a C compiler). Parsers install to `~/.local/share/nvim/site/parser`, which must win on the runtimepath. The missing check uses `get_installed()`, because nvim's bundled lua/markdown parsers lag the queries (`Invalid field name "operator"`).
 - After changing `lua/plugins.lua`, restart nvim; vim.pack installs new plugins on startup, and `:Pack` → `C` removes ones you dropped.
 - Solidity/Move servers are not Mason-managed; `nomicfoundation-solidity-language-server` and `move-analyzer` must be on PATH.
 
