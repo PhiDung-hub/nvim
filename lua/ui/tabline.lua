@@ -188,6 +188,15 @@ vim.api.nvim_create_autocmd({ "FocusGained", "FocusLost" }, {
     vim.cmd.redrawtabline()
   end,
 })
+-- WezTerm can drop a FocusGained (e.g. after a tab switch); any keystroke means the pane has focus.
+vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "ModeChanged", "WinEnter", "CmdlineEnter", "TextChanged" }, {
+  group = group,
+  callback = function()
+    if focused then return end
+    focused = true
+    vim.cmd.redrawtabline()
+  end,
+})
 vim.api.nvim_create_autocmd("ColorScheme", { group = group, callback = function() derived = {} end })
 
 return M
