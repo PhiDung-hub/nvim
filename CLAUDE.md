@@ -1,10 +1,6 @@
 # Neovim Configuration
 
-<<<<<<< HEAD
-Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Five upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 14.5 ms headless.
-=======
 Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Four upstream plugins (plus copilot-language-server from Mason and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 17 ms headless.
->>>>>>> native-cmp
 
 ## Design
 
@@ -79,11 +75,7 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
 - `lua/plugins.lua` keeps lazy.nvim-style specs: `"owner/repo"`, `version` (semver, e.g. `"1.x"`) / `tag` / `branch`, `lazy = false`, `event` (`"BufReadPre *.lean"` takes a pattern), `ft`, `cmd`, `keys` (`{ lhs, rhs, desc, mode }`), `init`, `opts` (→ `require(main).setup`), `config`, `build` (`":Cmd"` or a function, run on vim.pack's `PackChanged` install/update).
 - `vim.pack.add` installs everything at startup but loads nothing (`load` is a no-op); `lazy = false` or a spec without triggers is `packadd`ed during init. Triggers: one-shot autocmds (the event is replayed for augroups the plugin created), stub user commands (re-run with range/bang/args, completion loads first), stub keymaps, and a `package.loaders` searcher so `require` of an unloaded plugin's module loads it (for example, loading fff on its first `require`). Builtins gzip/matchit/netrw/tar/tohtml/tutor/zip are disabled.
 - `:Pack` (alias `:Lazy`): centred ` ❯ pack ` window, loaded/not-loaded sections with version, rev, load time and reason or triggers. `U` update (vim.pack's review buffer; `:w` applies), `S` sync without review, `u` update the plugin under the cursor, `l` load it, `C` remove plugins on disk that left the spec, `R` restore the lockfile revisions, `L` the update log, `⏎` details (src, path, version, triggers, build), `q` close.
-<<<<<<< HEAD
-- Startup is about 14.5 ms headless, median of 5 (16.2 ms on lazy.nvim).
-=======
-- Startup is about 16.8 ms headless, median of 5 (17.0 ms before native completion, measured in alternating runs). The old `~/.local/share/nvim/lazy` checkouts are no longer read.
->>>>>>> native-cmp
+- Startup is about 14.6 ms headless, median of 5 (16.2 ms on lazy.nvim + blink).
 
 ## LSP (lsp/*.lua + lua/core/lsp.lua)
 
