@@ -1,10 +1,5 @@
 {
   "plugins": {
-    "fff": {
-      "rev": "95fd777c2529fc7b4d7572dabff64cc07268f2c5",
-      "src": "https://github.com/dmtrKovalenko/fff",
-      "version": "'v0.11.0'"
-    },
     "lean.nvim": {
       "rev": "108592ebb16d57cbf84d994183327fe643dfa730",
       "src": "https://github.com/Julian/lean.nvim"

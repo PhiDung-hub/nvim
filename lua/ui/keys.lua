@@ -60,10 +60,6 @@ local CMD_TEXT = {
   Mason = "installer",
   MasonInstall = "install a tool",
   MasonUpdate = "update the registry",
-  FFFFind = "find files (path or query)",
-  FFFResume = "resume the last file search",
-  FFFScan = "rescan files",
-  FFFHealth = "fff health",
   Man = "read a man page",
 }
 

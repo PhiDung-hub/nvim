@@ -229,7 +229,6 @@ local hl = {
   NeoTreeIndentMarker = { fg = t.faint },
   NeoTreeFloatBorder = { link = "FloatBorder" },
   NeoTreeFloatTitle = { link = "FloatTitle" },
-  FFFBorder = { link = "FloatBorder" },
   -- completion
   AosCmpMenuBorder = { link = "FloatBorder" },
   AosCmpDocBorder = { link = "FloatBorder" },

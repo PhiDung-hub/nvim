@@ -55,6 +55,9 @@ map("n", "drb", function() tabline.close_side("right") end, { desc = "Close righ
 map("n", "\\\\", pick.buffers, { desc = "Buffers" })
 map("n", ";t", pick.help, { desc = "Help tags" })
 map("n", ";e", pick.diagnostics, { desc = "Diagnostics" })
+map("n", ";f", function() pick.files() end, { desc = "Find files" })
+map("n", ";r", function() pick.grep() end, { desc = "Live grep" })
+map("n", ";;", pick.resume, { desc = "Resume search" })
 
 map("n", "<M-t>", function() require("ui.tree").toggle() end, { desc = "Tree" })
 map("n", "<S-M-T>", function() require("ui.tree").toggle(true) end, { desc = "Tree float" })

@@ -1,12 +1,12 @@
 # Neovim Configuration
 
-Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Three upstream plugins (plus language servers installed by `:Tools` and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 13.4 ms headless.
+Neovim 0.12 config on nvim's built-in **vim.pack** (local lazy-loading in `config/pack.lua`). Two upstream plugins (plus language servers installed by `:Tools` and a local llama.cpp server); everything small or medium is rewritten locally in `lua/core`, `lua/ui` and `lua/agent`. Startup is about 13–15 ms headless.
 
 ## Design
 
 One look with WezTerm/Agent OS. The guideline lives in `~/.config/wezterm/DESIGN.md`, and that file wins. `lua/design.lua` is its token block copied verbatim; `colors/agentos.lua` paints from it.
 - The chrome follows the state colours: green done/running, yellow attention/waiting, blue ids/Codex, magenta shas/times/Claude, cyan args/paths/active tab, red failed, dim for idle or unknown. Code uses Tokyo Night syntax hues.
-- Square `single` borders only (`winborder`). Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `. The centred command line draws its border with one-eighth blocks on the cells' outer edge (`🭽▔🭾▕🭿▁🭼▏`), because `single` lines sit mid-cell and leave half a cell of `ground` outside them.
+- Square borders drawn on the cells' outer edge with one-eighth blocks (`winborder`/`pumborder` = `🭽▔🭾▕🭿▁🭼▏`), because `single` lines sit mid-cell and leave half a cell of `ground` outside them; titles sit just under the top line, and touching panes share one `▕▏` divider. Code passes `vim.o.winborder` (a list) or nothing, never `"single"`. Content windows leave the background unpainted so WezTerm's wallpaper shows; floats and menus draw `ground`. Floats are titled ` ❯ verb `.
 - Rows read `glyph · id · text`, using the glyphs ✓ ◆ ○ ● ✗ ! ? ❯ ⎿ ▸ ▾.
 - One top bar like the WezTerm tab bar (`laststatus=0`, `showtabline=2`): buffers on the left, each padded one cell: the focus tab (only while the nvim pane has focus; an unfocused pane shows it as a plain tab) is a cyan-tinted band (`TabLineSel`, cyan blended 22% into ground) ` ● 2:name line:col ` that keeps its colours (cyan bold `● 2:`, coloured icon, bold `text` name, yellow `+`, magenta position), never inverted; others read ` 2:name ` or ` ! n:name ` (pending agent hunks), cyan on `surface`, divided by faint `│` (no divider beside the focus block). Each tab carries its file icon, the name widened with parent dirs when two tabs share it (`a/init.lua`), `+` unsaved, a lock when read-only, and `✗n`/`!n` diagnostics; the focus tab adds `line:charcol` (absolute line, column in characters). Right side: mode, the current file's icon · filetype · language servers (Copilot omitted; `lsp off` for a big file) · non-utf-8/non-unix flags, diagnostics, AI, agent, branch, and `totalL pct%`.
 - Shared highlight groups are `Aos*`: `AosSeg<Color>` for segments, `AosAgent*` for review hunks.
@@ -26,7 +26,7 @@ lua/core/treesitter.lua  FileType → vim.treesitter.start + indentexpr (size-gu
 lua/core/format.lua      external formatters + LSP fallback, solhint diagnostics
 lua/core/edit.lua        autopairs, tag auto-close, #rrggbb swatches
 lua/ui/tree.lua          async file tree (sidebar/float): capped libuv reads, git, diagnostics, watches
-lua/ui/pick.lua          fuzzy picker with optional preview pane; also vim.ui.select
+lua/ui/pick.lua          fuzzy picker with optional preview pane; files/grep via rg (replaces fff); also vim.ui.select
 lua/ui/lsp.lua           LSP/syntax UI: hover, peek, finder, outline, breadcrumbs, rename, calls, inspect
 lua/ui/fix.lua           quick fix: cursor-line hint, apply/pick with diff preview, fix-all, Codex/agent fallback
 lua/ui/tabline.lua       buffers + status segments
@@ -34,24 +34,23 @@ lua/ui/term.lua          float terminal
 lua/ui/pack.lua          :Pack / :Lazy manager window
 lua/ui/tools.lua         :Tools / :Mason installer for the language servers and formatters
 lua/ui/cmdline.lua       centred command line (ext_cmdline float, history/completion ghost, list hung below)
-lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for fff
-lua/ui/markdown.lua      in-buffer markdown rendering (extmarks from the markdown parsers)
+lua/ui/icons.lua         file glyphs + Aos colours
+lua/ui/markdown.lua      in-buffer markdown rendering (extmarks from the markdown parsers); doc() formats LSP docs
 lua/agent/               Claude/Codex co-working (below)
 lua/git/                 VS Code-style git (below): repo, signs, scm, diff, merge, graph, branch
 ```
 
 ## Plugins (lua/plugins.lua)
 
-3 upstream plugins, managed by `vim.pack` (installs to `~/.local/share/nvim/site/pack/core/opt`, lockfile `nvim-pack-lock.json`). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
+2 upstream plugins, managed by `vim.pack` (installs to `~/.local/share/nvim/site/pack/core/opt`, lockfile `nvim-pack-lock.json`). Lua sizes exclude tests; "native" = prebuilt or downloaded binary.
 
 ```
 vim.pack (built in)             plugin manager + config/pack.lua lazy loading · needs git
 ├── lean.nvim                   Lean LSP + infoview, *.lean        15.1k Lua · ships its own lsp/leanls.lua · needs lean/lake (elan)
-├── nvim-treesitter  main       parser install + queries + indent   4.6k Lua + queries · needs tree-sitter CLI ≥0.26, cc
-└── fff  v0.11.0                file/content search, keys          10.2k Lua + native libfff_nvim.so (download_or_build)
+└── nvim-treesitter  main       parser install + queries + indent   4.6k Lua + queries · needs tree-sitter CLI ≥0.26, cc
 ```
 
-Soft edges (`pcall`): fff → devicons shim/plenary.filetype; without plenary it uses `vim.filetype.match` and extension fallbacks. No remaining plugin requires nui or plenary.
+Neither needs nui, plenary or devicons.
 
 External tools: language servers and formatters installed by `:Tools` into `~/.local/share/nvim/mason/bin` (copilot-language-server, lua-language-server, pyright, ruff, rust-analyzer fallback, stylua, prettierd, taplo, yaml/json/html/css/svelte/tailwind/emmet/bash/prisma servers…), rustup `rust-analyzer`, TypeScript 7 `tsc`, `llama-server` + model in `~/.local/share/llama`, `codex`, `wezterm`, `rg`, `git`, `wl-copy`/`xsel`, `solhint`, `forge`.
 
@@ -60,22 +59,22 @@ External tools: language servers and formatters installed by `:Tools` into `~/.l
 | # | Plugin(s) | Local replacement | Effort | Notes |
 |---|---|---|---|---|
 | 1 ✓ done | neo-tree + nui + plenary | `ui/tree.lua`: async libuv tree, `git.repo` status, sidebar/float | medium | six upstream plugins remain |
-| 2 | fff | `ui/pick` + `rg --files` / `rg --vimgrep`, frecency from `v:oldfiles` | medium | loses fff's native scorer |
+| 2 ✓ done | fff | `ui/pick` + `rg --files` / `rg --vimgrep`, recency from `v:oldfiles` and listed buffers | medium | `matchfuzzypos` instead of fff's native scorer; two upstream plugins remain |
 | 3 ✓ done | mason | `ui/tools.lua` `:Tools` (alias `:Mason`): fixed list of 21 tools via npm, pip venv, cargo or GitHub releases into the same `mason/` dir | medium | three upstream plugins remain |
 | 4 ✓ done | lazy.nvim | `vim.pack` + `config/pack.lua` + `ui/pack.lua` | medium | lazy loading, build hooks, :Pack window |
 | 5 ✓ done | blink.cmp | `core/cmp.lua`: native `vim.lsp.completion`, capped buffer/path sources, docs/signatures; cmdline list in `ui/cmdline` | large | native fuzzy matching and snippets |
 | — | nvim-treesitter, lean.nvim | keep | — | queries/parser builds and the Lean infoview are too large to own |
 
-Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons` + shim; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`; mason → `ui/tools`; blink.cmp → native completion + `core/cmp` + `ui/cmdline`.
+Replaced locally already: neo-tree + nui + plenary → `ui/tree`; nvim-web-devicons → `ui/icons`; render-markdown → `ui/markdown`; nvim-lspconfig → `lsp/*.lua` (dropped helper commands: LspPyrightSetPythonPath, LspClangdShowSymbolInfo, rust-analyzer code-lens runSingle); bufferline/lualine → `ui/tabline`; telescope → `ui/pick`; lspsaga → `ui/lsp`; toggleterm → `ui/term`; gitsigns/neo-tree git float → `lua/git`; conform/nvim-lint → `core/format`; autopairs/ts-autotag/colorizer → `core/edit` (tag rename is native LSP linked editing, colours inside CSS/Tailwind come from native LSP documentColor); bigfile/persistence → `config/autocmds`; indent-blankline → `listchars` leadmultispace; kanagawa → `colors/agentos`; codecompanion → `lua/agent` + `core/complete`; mason → `ui/tools`; blink.cmp → native completion + `core/cmp` + `ui/cmdline`; fff → `ui/pick` files/grep.
 
 Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TODO/NOTE), rainbow-delimiters, friendly-snippets, mason-lspconfig, mason-tool-installer, ts-context-commentstring (JSX `{/* */}` comes from nvim-treesitter's query metadata).
 
 ## Plugin manager (lua/config/pack.lua, lua/ui/pack.lua)
 
 - `lua/plugins.lua` keeps lazy.nvim-style specs: `"owner/repo"`, `version` (semver, e.g. `"1.x"`) / `tag` / `branch`, `lazy = false`, `event` (`"BufReadPre *.lean"` takes a pattern), `ft`, `cmd`, `keys` (`{ lhs, rhs, desc, mode }`), `init`, `opts` (→ `require(main).setup`), `config`, `build` (`":Cmd"` or a function, run on vim.pack's `PackChanged` install/update).
-- `vim.pack.add` installs everything at startup but loads nothing (`load` is a no-op); `lazy = false` or a spec without triggers is `packadd`ed during init. Triggers: one-shot autocmds (the event is replayed for augroups the plugin created), stub user commands (re-run with range/bang/args, completion loads first), stub keymaps, and a `package.loaders` searcher so `require` of an unloaded plugin's module loads it (for example, loading fff on its first `require`). Builtins gzip/matchit/netrw/tar/tohtml/tutor/zip are disabled.
+- `vim.pack.add` installs everything at startup but loads nothing (`load` is a no-op); `lazy = false` or a spec without triggers is `packadd`ed during init. Triggers: one-shot autocmds (the event is replayed for augroups the plugin created), stub user commands (re-run with range/bang/args, completion loads first), stub keymaps, and a `package.loaders` searcher so `require` of an unloaded plugin's module loads it. Builtins gzip/matchit/netrw/tar/tohtml/tutor/zip are disabled.
 - `:Pack` (alias `:Lazy`): centred ` ❯ pack ` window, loaded/not-loaded sections with version, rev, load time and reason or triggers. `U` update (vim.pack's review buffer; `:w` applies), `S` sync without review, `u` update the plugin under the cursor, `l` load it, `C` remove plugins on disk that left the spec, `R` restore the lockfile revisions, `L` the update log, `⏎` details (src, path, version, triggers, build), `q` close.
-- Startup is about 13.4 ms headless, median of 5 (16.2 ms on lazy.nvim + blink + mason).
+- Startup is about 13–15 ms headless (median of 7 was 15.1 ms on a busy machine; 16.2 ms on lazy.nvim + blink + mason).
 
 ## LSP (lsp/*.lua + lua/core/lsp.lua)
 
@@ -87,7 +86,7 @@ Dropped: which-key, todo-comments (the treesitter `comment` parser highlights TO
 - **Rust:** rustup's `~/.cargo/bin/rust-analyzer` (matches the toolchain; the `:Tools` standalone build may not), with clippy checks.
 - `move_analyzer` needs a `Move.toml` (`workspace_required`).
 - UI lives in `lua/ui/lsp.lua` (replaces lspsaga), all floats titled ` ❯ verb `:
-  - `K` hover (own request: blank lines and stacked rules collapsed to one faint `─` divider, 1-cell padding; markdown rules and code-fence borders use the `Whitespace` guide colour) · `gd` definition (several → previewed list) · `gp` peek: editable float, `<CR>` opens it, `q` closes
+  - `K` hover (own request: blank lines and stacked rules collapsed to one faint `─` divider, 1-cell padding; markdown rules and code-fence borders use the `Whitespace` guide colour). Hover, signature help and completion docs all go through `ui/markdown.doc`: `@param`/`@return`/`:param x:` tags become *params*/*returns* lists, links keep only their text, and fence lines stay (the markdown query's `conceal_lines` is stripped once via `query.set`) · `gd` definition (several → previewed list) · `gp` peek: editable float, `<CR>` opens it, `q` closes
   - `gf` finder: definitions ◆, implementations ◇ and references ● in one previewed list; a location keeps its strongest kind
   - `<leader>o` outline sidebar (right, follows the cursor and the focused LSP buffer, previews on move, closes when last)
   - breadcrumbs winbar ` ❯ dir/file › ◇ Class › ƒ method ` in LSP buffers (documentSymbol, refreshed 350 ms after edits)
@@ -141,7 +140,7 @@ Ghost text tagged with its source (`● local` green, `● copilot` dim, `● co
 
 ## Keys (lua/config/keymaps.lua)
 
-`q` visual block · `zh/zj/zk/zl` windows · `sv` vsplit · `<C-a>` select all · `<F3>` reindent · `<C-c>` copy · `y` yanks inside nvim only, `Y` (line, or a visual selection) also copies to the system clipboard · `<C-s>` save · `u`/`<C-r>`/`<C-z>`/`<C-y>` undo/redo (message recoloured: ↶/↷ cyan, change count green/red/yellow, `#seq` blue, age magenta) · `<C-m-j/k>` move lines · `<Tab>/<S-Tab>` buffers · `<leader>1-5`/`<leader>0` go to buffer · `<C-q>`/`db` close · `dlb`/`drb` close left/right · `\\` buffers · `;t` help · `;e` diagnostics · `;f`/`;r`/`;;` fff · `<M-t>` tree sidebar · `<S-M-T>` tree float · `<S-M-B>` buffer picker · `<m-->` terminal · `<leader>f` format · `<leader>qs`/`<leader>ql` sessions · `<leader>p` / `:Markdown` toggle markdown rendering.
+`q` visual block · `zh/zj/zk/zl` windows · `sv` vsplit · `<C-a>` select all · `<F3>` reindent · `<C-c>` copy · `y` yanks inside nvim only, `Y` (line, or a visual selection) also copies to the system clipboard · `<C-s>` save · `u`/`<C-r>`/`<C-z>`/`<C-y>` undo/redo (message recoloured: ↶/↷ cyan, change count green/red/yellow, `#seq` blue, age magenta) · `<C-m-j/k>` move lines · `<Tab>/<S-Tab>` buffers · `<leader>1-5`/`<leader>0` go to buffer · `<C-q>`/`db` close · `dlb`/`drb` close left/right · `\\` buffers · `;t` help · `;e` diagnostics · `;f` files (recent and open first) · `;r` live grep (literal, smart-case, 80 ms debounce) · `;;` resume the last search with its query · `<M-t>` tree sidebar · `<S-M-T>` tree float · `<S-M-B>` buffer picker · `<m-->` terminal · `<leader>f` format · `<leader>qs`/`<leader>ql` sessions · `<leader>p` / `:Markdown` toggle markdown rendering.
 
 Tree: `<CR>`/`l`/`o` open or fold, `h` parent/collapse, `s`/`S` splits, `t` tab, `P` preview without leaving, `a` add (`/` creates a directory), `r` rename, `d` trash (confirmation before permanent fallback), `c`/`x`/`p` copy/cut/paste, `y`/`Y` relative/absolute path, `H` gitignored, `R` refresh, `z` collapse all, `.` root here, `-` root up, `/` live filter of loaded names (Enter selects the first match and keeps tree focus; Esc clears), `g?` help, `q` close. `nvim .` replaces netrw in place without a listed directory buffer; opening a file releases that window so the next tree toggle opens a sidebar. Sessions preserve the root, presentation, width and expanded directories via `AosTreeSession` and `sessionoptions+=globals`. Sidebar width starts at 32 and is remembered for this session; the float uses ground with a square border. Scans read batches of 128, retain at most 2,000 entries per directory (plus an omitted-count row), and cut off at 3 s. Reveal validates the full path asynchronously and can retain its ancestor chain beyond the cap; the newest external directory entry can also appear beyond the cap, with omission counts adjusted. Expanded directories are rescanned after 150 ms; directory and git metadata events debounce git status for 300 ms, with one request in flight. While visible, a 400 ms asynchronous status poll covers edits in collapsed directories; porcelain parsing and indexing yield in 2 ms batches. Closing/collapsing stops their watches. Git reads share `git.repo`'s budget; staged letters carry `✓`, unstaged letters stand alone. Rename/cut uses Linux `renameat2(RENAME_NOREPLACE)` in a worker and refuses destination-buffer collisions; unsupported or cross-filesystem moves fail without an overwrite fallback.
 
