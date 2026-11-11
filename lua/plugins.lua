@@ -43,7 +43,21 @@ return {
         ["<C-b>"] = { "scroll_documentation_up", "fallback" },
         ["<C-f>"] = { "scroll_documentation_down", "fallback" },
       },
-      sources = { default = { "lsp", "path", "buffer" } },
+      sources = {
+        default = { "lsp", "path", "buffer" },
+        providers = {
+          cmdline = {
+            transform_items = function(_, items)
+              local cmds = vim.api.nvim_get_commands({})
+              for _, item in ipairs(items) do
+                local cmd = cmds[item.label]
+                if cmd and cmd.definition ~= "" then item.labelDetails = { description = cmd.definition:gsub("%s+", " ") } end
+              end
+              return items
+            end,
+          },
+        },
+      },
       completion = {
         menu = {
           border = "single",
@@ -60,6 +74,11 @@ return {
         },
         documentation = { auto_show = true, auto_show_delay_ms = 200, draw = draw_docs, window = { border = "single" } },
         list = { selection = { preselect = false, auto_insert = false } },
+      },
+      cmdline = {
+        keymap = { preset = "cmdline", ["<Right>"] = { "accept", "fallback" } },
+        completion = { menu = { auto_show = true }, ghost_text = { enabled = false }, list = { selection = { preselect = false } } },
+        sources = { "cmdline", "buffer" },
       },
       signature = { enabled = true, window = { border = "single", max_width = 80 } },
       appearance = { nerd_font_variant = "mono", kind_icons = kind_icons },

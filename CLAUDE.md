@@ -30,6 +30,7 @@ lua/ui/lsp.lua           LSP/syntax UI: hover, peek, finder, outline, breadcrumb
 lua/ui/fix.lua           quick fix: cursor-line hint, apply/pick with diff preview, fix-all, Codex/agent fallback
 lua/ui/tabline.lua       buffers + status segments
 lua/ui/term.lua          float terminal
+lua/ui/cmdline.lua       centred command line (ext_cmdline float, ghost completion, blink menu below)
 lua/ui/icons.lua         file glyphs + Aos colours; lua/nvim-web-devicons.lua forwards to it for fff
 lua/ui/markdown.lua      in-buffer markdown rendering (extmarks from the markdown parsers)
 lua/agent/               Claude/Codex co-working (below)
